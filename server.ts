@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { registerRoutes } from "./routes";
 
 const app = express();
 
@@ -7,9 +8,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.get("/", (_req, res) => {
-  res.status(200).json({ status: "ok" });
-});
+registerRoutes(app);
 
 const port = Number(process.env.PORT ?? 3000);
 
