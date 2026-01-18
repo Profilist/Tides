@@ -1,5 +1,9 @@
 import type { Express, Request } from "express";
-import { unzipSync } from "fflate";
+import { createWriteStream } from "fs";
+import { mkdir } from "fs/promises";
+import path from "path";
+import { gunzipSync, unzipSync } from "fflate";
+import { saveAmplitudeEvents } from "../services/amplitude-store.ts";
 
 const AMPLITUDE_DEFAULT_LIMIT = 1000;
 const AMPLITUDE_MAX_LIMIT = 10000;
@@ -72,6 +76,7 @@ const parseAmplitudeZip = (
   zippedData: ArrayBuffer,
   limit: number,
   eventTypes?: Set<string>,
+  onEvent?: (event: Record<string, unknown>) => void,
 ) => {
   const files = unzipSync(new Uint8Array(zippedData));
   const decoder = new TextDecoder("utf-8");
@@ -79,7 +84,9 @@ const parseAmplitudeZip = (
   let totalEvents = 0;
 
   for (const data of Object.values(files)) {
-    const text = decoder.decode(data);
+    const bytes =
+      data[0] === 0x1f && data[1] === 0x8b ? gunzipSync(data) : data;
+    const text = decoder.decode(bytes);
     const lines = text.split("\n");
 
     for (const line of lines) {
@@ -102,6 +109,7 @@ const parseAmplitudeZip = (
       }
 
       totalEvents += 1;
+      onEvent?.(parsed);
       if (events.length < limit) {
         events.push(parsed);
       }
@@ -139,6 +147,19 @@ export const registerAmplitudeRoutes = (app: Express) => {
           eventTypesRaw.split(",").map((item) => item.trim()).filter(Boolean),
         )
       : undefined;
+    const saveToRaw =
+      typeof req.query.saveTo === "string" ? req.query.saveTo.trim() : "";
+    const saveToValue = saveToRaw.toLowerCase();
+    const saveToSupabase =
+      saveToValue === "supabase" ||
+      saveToValue === "db" ||
+      saveToValue === "database";
+    const saveToEnabled = Boolean(saveToRaw);
+    let savePath: string | null = null;
+    let savedEvents = 0;
+    let skippedEvents = 0;
+    let fileStream: ReturnType<typeof createWriteStream> | null = null;
+    const supabaseEvents: Record<string, unknown>[] = [];
 
     const endpoint = getAmplitudeEndpoint();
     const url = new URL(endpoint);
@@ -174,11 +195,46 @@ export const registerAmplitudeRoutes = (app: Express) => {
       }
 
       const buffer = await response.arrayBuffer();
+      if (saveToEnabled && !saveToSupabase) {
+        const defaultDir = path.join(process.cwd(), "data", "amplitude");
+        const isDefault =
+          saveToRaw === "1" ||
+          saveToRaw.toLowerCase() === "true" ||
+          saveToRaw.toLowerCase() === "yes";
+        savePath = isDefault
+          ? path.join(defaultDir, `amplitude-${start}-${end}.jsonl`)
+          : saveToRaw;
+        await mkdir(path.dirname(savePath), { recursive: true });
+        fileStream = createWriteStream(savePath, { encoding: "utf8" });
+      }
       const { events, totalEvents, fileCount } = parseAmplitudeZip(
         buffer,
         limit,
         eventTypes,
+        fileStream || saveToSupabase
+          ? (event) => {
+              if (fileStream) {
+                fileStream.write(`${JSON.stringify(event)}\n`);
+                savedEvents += 1;
+              }
+              if (saveToSupabase) {
+                supabaseEvents.push(event);
+              }
+            }
+          : undefined,
       );
+      if (fileStream) {
+        await new Promise<void>((resolve, reject) => {
+          fileStream?.end();
+          fileStream?.on("finish", resolve);
+          fileStream?.on("error", reject);
+        });
+      }
+      if (saveToSupabase) {
+        const result = await saveAmplitudeEvents(supabaseEvents);
+        savedEvents = result.savedEvents;
+        skippedEvents = result.skippedEvents;
+      }
 
       res.status(200).json({
         range: { start, end },
@@ -186,6 +242,10 @@ export const registerAmplitudeRoutes = (app: Express) => {
         totalEvents,
         returnedEvents: events.length,
         events,
+        ...(savePath ? { savedTo: savePath, savedEvents } : {}),
+        ...(saveToSupabase
+          ? { savedTo: "supabase", savedEvents, skippedEvents }
+          : {}),
       });
     } catch (error) {
       res.status(500).json({

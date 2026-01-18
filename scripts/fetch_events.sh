@@ -5,6 +5,7 @@ BASE_URL="${BASE_URL:-http://localhost:3000}"
 HOURS_BACK="${HOURS_BACK:-1000}"
 LIMIT="${LIMIT:-1000}"
 EVENT_TYPES="${EVENT_TYPES:-}"
+SAVE_TO="${SAVE_TO:-}"
 
 if [[ -f ".env" ]]; then
   set -a
@@ -16,6 +17,9 @@ fi
 QUERY="hoursBack=${HOURS_BACK}&limit=${LIMIT}"
 if [[ -n "${EVENT_TYPES}" ]]; then
   QUERY="${QUERY}&eventTypes=${EVENT_TYPES}"
+fi
+if [[ -n "${SAVE_TO}" ]]; then
+  QUERY="${QUERY}&saveTo=${SAVE_TO}"
 fi
 
 echo "Fetching Amplitude events..."
