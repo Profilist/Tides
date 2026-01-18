@@ -143,6 +143,22 @@ export default function DesignPlatformUI() {
     });
   };
 
+  const updateSuggestionPreview = (editor: Editor, html: string) => {
+    const shapes = editor.getCurrentPageShapes();
+    const toDelete = shapes
+      .filter(
+        (shape) =>
+          shape.type === HTML_PREVIEW_TYPE &&
+          typeof (shape as { props?: { title?: string } }).props?.title === 'string' &&
+          (shape as { props?: { title?: string } }).props?.title === 'AI Suggested UI',
+      )
+      .map((shape) => shape.id);
+    if (toDelete.length > 0) {
+      editor.deleteShapes(toDelete);
+    }
+    insertHtmlPreview(editor, html);
+  };
+
   const handleGenerateSuggestion = async () => {
     if (!editorRef.current || isGeneratingSuggestion) return;
     setIsGeneratingSuggestion(true);
@@ -318,6 +334,22 @@ export default function DesignPlatformUI() {
     previewWindow.document.open();
     previewWindow.document.write(html);
     previewWindow.document.close();
+  };
+
+  const handleApplySuggestionUpdate = (html: string, changeSummary?: string[]) => {
+    if (!html.trim()) {
+      return;
+    }
+    setSuggestionContext({
+      html,
+      summary:
+        changeSummary && changeSummary.length > 0
+          ? changeSummary.join(' ')
+          : suggestionContext?.summary ?? null,
+    });
+    if (editorRef.current) {
+      updateSuggestionPreview(editorRef.current, html);
+    }
   };
 
   useEffect(() => {
@@ -529,6 +561,7 @@ export default function DesignPlatformUI() {
           selectedIssue={issues.find((issue) => issue.id === selectedIssueId) ?? null}
           suggestionContext={suggestionContext}
           suggestionMessage={suggestionMessage}
+          onSuggestionUpdate={handleApplySuggestionUpdate}
           issuesError={issuesError}
           selectedShapes={selectedShapes}
           chatContextShapes={chatContextShapes}

@@ -35,6 +35,7 @@ interface ChatPanelProps {
     summary?: string | null;
   } | null;
   suggestionMessage: ChatMessage | null;
+  onSuggestionUpdate: (html: string, changeSummary?: string[]) => void;
   isTyping: boolean;
   setIsTyping: (typing: boolean) => void;
   onClearSelection: () => void;
@@ -52,6 +53,7 @@ export function ChatPanel({
   selectedIssue,
   suggestionContext,
   suggestionMessage,
+  onSuggestionUpdate,
   isTyping,
   setIsTyping,
   onClearSelection,
@@ -258,6 +260,9 @@ export function ChatPanel({
         evidence: data.reply?.evidence ?? [],
       };
       setMessages((prev) => [...prev, assistantMessage]);
+      if (typeof data.updatedHtml === 'string' && data.updatedHtml.trim()) {
+        onSuggestionUpdate(data.updatedHtml, data.changeSummary);
+      }
     } catch (error) {
       console.error('Failed to send chat message', error);
       setChatError(

@@ -22,6 +22,7 @@ interface RightSidebarProps {
     summary?: string | null;
   } | null;
   suggestionMessage: ChatMessage | null;
+  onSuggestionUpdate: (html: string, changeSummary?: string[]) => void;
   issuesError: string | null;
   selectedShapes: SelectedShape[];
   chatContextShapes: ChatContextShape[];
@@ -44,6 +45,7 @@ export function RightSidebar({
   selectedIssue,
   suggestionContext,
   suggestionMessage,
+  onSuggestionUpdate,
   issuesError,
   selectedShapes,
   chatContextShapes,
@@ -118,6 +120,7 @@ export function RightSidebar({
             selectedIssue={selectedIssue}
             suggestionContext={suggestionContext}
             suggestionMessage={suggestionMessage}
+            onSuggestionUpdate={onSuggestionUpdate}
             isTyping={isTyping}
             setIsTyping={setIsTyping}
             onClearSelection={onClearSelection}

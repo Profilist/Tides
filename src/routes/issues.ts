@@ -413,15 +413,19 @@ export const registerIssueRoutes = (app: Express) => {
         return;
       }
 
+      const chatResult = await generateChatResponseWithGemini({
+        issue,
+        userMessage: message,
+        suggestionSummary,
+        suggestionHtml,
+      });
       const assistantMessage =
-        (await generateChatResponseWithGemini({
-          issue,
-          userMessage: message,
-          suggestionSummary,
-          suggestionHtml,
-        })) ||
+        chatResult.reply ||
         issue.summary ||
         `Users are seeing a ${issue.direction} in ${issue.eventType} for the selected segment.`;
+      const updatedHtml = chatResult.updatedHtml?.trim() ?? "";
+      const updatedHtmlDiff =
+        updatedHtml && suggestionHtml ? buildHtmlDiff(suggestionHtml, updatedHtml) : "";
 
       res.status(200).json({
         reply: {
@@ -431,6 +435,9 @@ export const registerIssueRoutes = (app: Express) => {
             hasSuggestionHtml: Boolean(suggestionHtml.trim()),
           }),
         },
+        updatedHtml: updatedHtml || undefined,
+        updatedHtmlDiff: updatedHtmlDiff || undefined,
+        changeSummary: chatResult.changeSummary,
         meta: {
           issueId,
         },

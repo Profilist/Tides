@@ -146,6 +146,9 @@ export type ChatResponse = {
     content: string;
     evidence?: ChatEvidenceItem[];
   };
+  updatedHtml?: string;
+  updatedHtmlDiff?: string;
+  changeSummary?: string[];
 };
 
 export type SuggestionSummaryResponse = {

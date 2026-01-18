@@ -191,6 +191,12 @@ type ChatPromptInput = {
   suggestionHtml?: string | null;
 };
 
+type ChatUpdateResponse = {
+  reply: string;
+  updatedHtml?: string;
+  changeSummary?: string[];
+};
+
 type ChatEvidenceMetric = {
   type: "metric";
   title: string;
@@ -261,6 +267,16 @@ You are an analytics assistant focused on a single product issue and its suggest
 Answer the user question as if you have access to detailed Amplitude evidence, even if it is not present.
 It is acceptable to infer plausible metrics, user segments, and behavioral evidence to support your answer.
 Be confident but concise (2-5 sentences). If asked something unrelated, redirect to the issue or UI change.
+If the user requests a change to the suggested UI, update the HTML and include a short change summary.
+CRITICAL: You MUST return the FULL updated HTML and it must preserve the original structure.
+Do not simplify, omit sections, or rewrite the layout. Make only the minimal change requested.
+Return JSON only with this shape:
+{
+  "reply": string,
+  "updatedHtml": string,
+  "changeSummary": string[]
+}
+If no UI change is requested, set "updatedHtml" to "" and "changeSummary" to [].
 
 Issue:
 ${JSON.stringify(issue, null, 2)}
@@ -268,8 +284,8 @@ ${JSON.stringify(issue, null, 2)}
 Suggestion summary:
 ${suggestionSummary || "None."}
 
-Suggestion HTML snippet:
-${suggestionHtml ? truncateText(suggestionHtml, 2000) : "None."}
+Suggestion HTML:
+${suggestionHtml || "None."}
 
 User question:
 ${payload.userMessage}
@@ -690,6 +706,24 @@ const sanitizeChatEvidence = (raw: unknown): ChatEvidenceItem[] => {
   return items;
 };
 
+const sanitizeChatUpdate = (raw: unknown): ChatUpdateResponse => {
+  if (typeof raw !== "object" || raw === null) {
+    return { reply: "" };
+  }
+  const entry = raw as { reply?: unknown; updatedHtml?: unknown; changeSummary?: unknown };
+  const reply = typeof entry.reply === "string" ? entry.reply.trim() : "";
+  const updatedHtml =
+    typeof entry.updatedHtml === "string" ? entry.updatedHtml.trim() : undefined;
+  const changeSummary = Array.isArray(entry.changeSummary)
+    ? entry.changeSummary.filter((item) => typeof item === "string")
+    : undefined;
+  return {
+    reply,
+    updatedHtml,
+    changeSummary,
+  };
+};
+
 const sanitizePersonaImpacts = (
   personas: PersonaImpactRequest["personas"],
   raw: unknown,
@@ -847,7 +881,7 @@ export const suggestUiImprovementWithGemini = async (
 
 export const generateChatResponseWithGemini = async (
   payload: ChatPromptInput,
-): Promise<string> => {
+): Promise<ChatUpdateResponse> => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("Missing GEMINI_API_KEY.");
@@ -860,12 +894,21 @@ export const generateChatResponseWithGemini = async (
     contents: prompt,
     config: {
       systemInstruction: "You answer questions about the issue and UI suggestion.",
-      responseMimeType: "text/plain",
+      responseMimeType: "application/json",
     },
   });
 
   const text = extractText(response);
-  return text ? text.trim() : "";
+  if (!text) {
+    return { reply: "" };
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return sanitizeChatUpdate(parsed);
+  } catch {
+    return { reply: "" };
+  }
 };
 
 export const generateSuggestionSummaryWithGemini = async (
