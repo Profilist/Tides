@@ -347,9 +347,10 @@ export const registerIssueRoutes = (app: Express) => {
       const personas = normalizePersonas(req.body?.personas);
       let personaImpacts: PersonaImpact[] = [];
       let personaImpactJobId: string | null = null;
+      const updatedHtmlDiff =
+        suggestion && suggestion.updatedHtml ? buildHtmlDiff(demoHtml, suggestion.updatedHtml) : "";
 
       if (suggestion && personas.length > 0) {
-        const updatedHtmlDiff = buildHtmlDiff(demoHtml, suggestion.updatedHtml);
         const job = await createPersonaImpactJob(
           {
             personas,
@@ -369,6 +370,7 @@ export const registerIssueRoutes = (app: Express) => {
       }
       res.status(200).json({
         suggestion,
+        updatedHtmlDiff,
         personaImpacts,
         personaImpactJobId,
         meta: {
@@ -454,6 +456,8 @@ export const registerIssueRoutes = (app: Express) => {
       res.status(400).json({ error: "Request body must include suggestionHtml." });
       return;
     }
+    const suggestionDiff =
+      typeof req.body?.suggestionDiff === "string" ? req.body.suggestionDiff.trim() : "";
     const changeSummary = normalizeStringArray(req.body?.changeSummary);
 
     try {
@@ -463,9 +467,18 @@ export const registerIssueRoutes = (app: Express) => {
         return;
       }
 
+      let resolvedDiff = suggestionDiff;
+      if (!resolvedDiff) {
+        const demoHtml = await loadDemoHtml();
+        if (demoHtml) {
+          resolvedDiff = buildHtmlDiff(demoHtml, suggestionHtml);
+        }
+      }
+
       const summary = await generateSuggestionSummaryWithGemini({
         issue,
         suggestionHtml,
+        suggestionDiff: resolvedDiff,
         changeSummary,
       });
 

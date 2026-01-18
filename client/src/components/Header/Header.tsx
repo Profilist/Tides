@@ -1,7 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { CheckCircle2, Share2, Play } from 'lucide-react';
 
-export function Header() {
+interface HeaderProps {
+  hasSuggestion: boolean;
+  onPlaySuggestion: () => void;
+}
+
+export function Header({ hasSuggestion, onPlaySuggestion }: HeaderProps) {
   const [projectName, setProjectName] = useState('AmpliClo');
   const [isEditing, setIsEditing] = useState(false);
   const [editingName, setEditingName] = useState('');
@@ -76,7 +81,18 @@ export function Header() {
           <Share2 size={13} />
           <span>Share</span>
         </button>
-        <button className="flex items-center justify-center rounded-md border border-slate-200 px-2 py-1.5 text-slate-600 hover:bg-slate-50 transition-colors">
+        <button
+          type="button"
+          onClick={onPlaySuggestion}
+          disabled={!hasSuggestion}
+          className={`flex items-center justify-center rounded-md border px-2 py-1.5 transition-colors ${
+            hasSuggestion
+              ? 'border-slate-200 text-slate-600 hover:bg-slate-50'
+              : 'border-slate-100 text-slate-300 cursor-not-allowed'
+          }`}
+          title={hasSuggestion ? 'Open suggested UI in new tab' : 'No suggested UI yet'}
+          aria-label="Open suggested UI in new tab"
+        >
           <Play size={13} fill="currentColor" />
         </button>
       </div>

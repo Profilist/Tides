@@ -169,12 +169,14 @@ export default function DesignPlatformUI() {
           insertHtmlPreview(editorRef.current, html);
           setSuggestionContext({ html });
           if (selectedIssueId) {
+            const summaryPayload = {
+              suggestionHtml: html,
+            };
+            console.log('suggestion-summary payload (local):', summaryPayload);
             const summaryResponse = await fetch(`/api/issues/${selectedIssueId}/suggestion-summary`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                suggestionHtml: html,
-              }),
+              body: JSON.stringify(summaryPayload),
             });
             if (summaryResponse.ok) {
               const summaryData = (await summaryResponse.json()) as SuggestionSummaryResponse;
@@ -249,6 +251,7 @@ export default function DesignPlatformUI() {
 
       const data = await response.json();
       const html = data?.suggestion?.updatedHtml;
+      const updatedHtmlDiff = typeof data?.updatedHtmlDiff === 'string' ? data.updatedHtmlDiff : '';
       const jobId = typeof data?.personaImpactJobId === 'string' ? data.personaImpactJobId : null;
       if (typeof html === 'string' && html.trim()) {
         insertHtmlPreview(editorRef.current, html);
@@ -257,15 +260,18 @@ export default function DesignPlatformUI() {
           : null;
         setSuggestionContext({ html, summary: changeSummary });
         if (selectedIssueId) {
+          const summaryPayload = {
+            suggestionHtml: html,
+            suggestionDiff: updatedHtmlDiff,
+            changeSummary: Array.isArray(data?.suggestion?.changeSummary)
+              ? data.suggestion.changeSummary
+              : [],
+          };
+          console.log('suggestion-summary payload (api):', summaryPayload);
           const summaryResponse = await fetch(`/api/issues/${selectedIssueId}/suggestion-summary`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              suggestionHtml: html,
-              changeSummary: Array.isArray(data?.suggestion?.changeSummary)
-                ? data.suggestion.changeSummary
-                : [],
-            }),
+            body: JSON.stringify(summaryPayload),
           });
           if (summaryResponse.ok) {
             const summaryData = (await summaryResponse.json()) as SuggestionSummaryResponse;
@@ -298,6 +304,20 @@ export default function DesignPlatformUI() {
     } finally {
       setIsGeneratingSuggestion(false);
     }
+  };
+
+  const handleOpenSuggestion = () => {
+    const html = suggestionContext?.html;
+    if (!html) {
+      return;
+    }
+    const previewWindow = window.open('', '_blank');
+    if (!previewWindow) {
+      return;
+    }
+    previewWindow.document.open();
+    previewWindow.document.write(html);
+    previewWindow.document.close();
   };
 
   useEffect(() => {
@@ -443,7 +463,10 @@ export default function DesignPlatformUI() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-white text-slate-900 font-sans antialiased selection:bg-[#1e61f0] selection:text-white overflow-hidden">
-      <Header />
+      <Header
+        hasSuggestion={Boolean(suggestionContext?.html)}
+        onPlaySuggestion={handleOpenSuggestion}
+      />
 
       <div className="flex flex-1 overflow-hidden relative">
         <LeftSidebar

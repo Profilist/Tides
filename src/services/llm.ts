@@ -221,6 +221,7 @@ type ChatEvidenceItem = ChatEvidenceMetric | ChatEvidenceEventSample | ChatEvide
 type SuggestionSummaryInput = {
   issue: Issue;
   suggestionHtml?: string | null;
+  suggestionDiff?: string | null;
   changeSummary?: string[] | null;
 };
 
@@ -295,6 +296,8 @@ const buildSuggestionSummaryPrompt = (payload: SuggestionSummaryInput) => {
   const changeSummary = Array.isArray(payload.changeSummary) ? payload.changeSummary : [];
   const suggestionHtml =
     typeof payload.suggestionHtml === "string" ? payload.suggestionHtml.trim() : "";
+  const suggestionDiff =
+    typeof payload.suggestionDiff === "string" ? payload.suggestionDiff.trim() : "";
 
   return `
 You are an analytics assistant summarizing a UI change and why it solves the issue.
@@ -335,7 +338,10 @@ ${JSON.stringify(issue, null, 2)}
 Change summary:
 ${JSON.stringify(changeSummary, null, 2)}
 
-Suggestion HTML snippet:
+Suggested UI diff (preferred):
+${suggestionDiff ? truncateText(suggestionDiff, 4000) : "None."}
+
+Updated HTML snippet (fallback if diff missing):
 ${suggestionHtml ? truncateText(suggestionHtml, 1200) : "None."}
   `.trim();
 };

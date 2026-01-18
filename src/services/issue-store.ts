@@ -67,31 +67,36 @@ type IssueRow = {
 };
 
 const toIssue = (row: IssueRow): Issue | null => {
-  if (row.payload_json) {
-    return row.payload_json;
-  }
-  if (!row.id || !row.metric || !row.event_type || !row.window_a_json || !row.window_b_json) {
+  const payload = row.payload_json ?? null;
+  const baseId = payload?.id ?? row.id ?? null;
+  const baseMetric = payload?.metric ?? row.metric ?? null;
+  const baseEventType = payload?.eventType ?? row.event_type ?? null;
+  const baseWindowA = payload?.windowA ?? row.window_a_json ?? null;
+  const baseWindowB = payload?.windowB ?? row.window_b_json ?? null;
+
+  if (!baseId || !baseMetric || !baseEventType || !baseWindowA || !baseWindowB) {
     return null;
   }
+
   return {
-    id: row.id,
-    metric: row.metric,
-    eventType: row.event_type,
-    direction: row.direction ?? "flat",
-    severity: row.severity ?? "low",
-    deltaPct: row.delta_pct ?? 0,
-    valueA: row.value_a ?? 0,
-    valueB: row.value_b ?? 0,
-    segment: row.segment_json ?? {},
-    windowA: row.window_a_json,
-    windowB: row.window_b_json,
-    sampleA: row.sample_a_json ?? { eventCount: 0, uniqueUsers: 0 },
-    sampleB: row.sample_b_json ?? { eventCount: 0, uniqueUsers: 0 },
-    summary: row.summary ?? undefined,
-    category: row.category ?? undefined,
-    pageNames: row.page_names_json ?? undefined,
-    evidence: row.evidence_json ?? undefined,
-    samples: row.samples_json ?? undefined,
+    id: baseId,
+    metric: baseMetric,
+    eventType: baseEventType,
+    direction: payload?.direction ?? row.direction ?? "flat",
+    severity: payload?.severity ?? row.severity ?? "low",
+    deltaPct: payload?.deltaPct ?? row.delta_pct ?? 0,
+    valueA: payload?.valueA ?? row.value_a ?? 0,
+    valueB: payload?.valueB ?? row.value_b ?? 0,
+    segment: payload?.segment ?? row.segment_json ?? {},
+    windowA: baseWindowA,
+    windowB: baseWindowB,
+    sampleA: row.sample_a_json ?? payload?.sampleA ?? { eventCount: 0, uniqueUsers: 0 },
+    sampleB: row.sample_b_json ?? payload?.sampleB ?? { eventCount: 0, uniqueUsers: 0 },
+    summary: payload?.summary ?? row.summary ?? undefined,
+    category: payload?.category ?? row.category ?? undefined,
+    pageNames: payload?.pageNames ?? row.page_names_json ?? undefined,
+    evidence: row.evidence_json ?? payload?.evidence ?? undefined,
+    samples: row.samples_json ?? payload?.samples ?? undefined,
   };
 };
 
