@@ -1,8 +1,19 @@
 import type { Express } from "express";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
+import { createPatch } from "diff";
 import { deriveIssues } from "../services/issue-detector";
-import { analyzeIssuesWithGemini, suggestUiImprovementWithGemini } from "../services/llm";
+import {
+  analyzeIssuesWithGemini,
+  analyzePersonaImpactsWithGemini,
+  suggestUiImprovementWithGemini,
+} from "../services/llm";
+import {
+  createPersonaImpactJob,
+  fetchPersonaImpactJob,
+  runPersonaImpactJob,
+} from "../services/persona-impact-jobs";
+import { fetchLatestPersonas } from "../services/persona-store";
 import type {
   IssueAnalysisRequest,
   IssueDetectionOptions,
@@ -11,11 +22,13 @@ import type {
   UiScreenshot,
   UiSuggestionRequest,
 } from "../types/issues";
+import type { PersonaDefinition, PersonaImpact } from "../types/personas";
 
 const MAX_EVENTS = 200000;
 const MAX_ISSUES = 10;
 const MAX_SCREENSHOTS = 5;
 const MAX_HTML_CHARS = 250000;
+const MAX_DIFF_CHARS = 20000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -58,6 +71,13 @@ const normalizeScreenshots = (value: unknown) => {
   return screenshots;
 };
 
+const normalizePersonas = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isRecord) as PersonaDefinition[];
+};
+
 const loadDemoHtml = async () => {
   try {
     const filePath = resolvePath(process.cwd(), "demo.html");
@@ -74,6 +94,17 @@ const loadSuggestionHtml = async () => {
   } catch {
     return "";
   }
+};
+
+const buildHtmlDiff = (originalHtml: string, updatedHtml: string) => {
+  if (!originalHtml || !updatedHtml) {
+    return "";
+  }
+  const patch = createPatch("demo.html", originalHtml, updatedHtml, "original", "updated");
+  if (patch.length <= MAX_DIFF_CHARS) {
+    return patch;
+  }
+  return `${patch.slice(0, MAX_DIFF_CHARS)}\n...diff truncated...`;
 };
 
 export const registerIssueRoutes = (app: Express) => {
@@ -179,12 +210,38 @@ export const registerIssueRoutes = (app: Express) => {
 
     try {
       const suggestion = await suggestUiImprovementWithGemini(payload);
+      const personas = normalizePersonas(req.body?.personas);
+      let personaImpacts: PersonaImpact[] = [];
+      let personaImpactJobId: string | null = null;
+
+      if (suggestion && personas.length > 0) {
+        const updatedHtmlDiff = buildHtmlDiff(demoHtml, suggestion.updatedHtml);
+        const job = await createPersonaImpactJob(
+          {
+            personas,
+            issue,
+            analysis,
+            project,
+            assets: {
+              demoHtml,
+              updatedHtmlDiff,
+              changeSummary: suggestion.changeSummary,
+            },
+          },
+          project?.id ?? "default",
+        );
+        personaImpactJobId = job.id;
+        void runPersonaImpactJob(job.id);
+      }
       res.status(200).json({
         suggestion,
+        personaImpacts,
+        personaImpactJobId,
         meta: {
           screenshotsUsed: screenshots.length,
           demoHtmlChars: demoHtml.length,
           hasSuggestion: Boolean(suggestion),
+          personasUsed: personas.length,
         },
       });
     } catch (error) {
@@ -195,7 +252,176 @@ export const registerIssueRoutes = (app: Express) => {
     }
   });
 
-  app.get("/api/suggestion-output", async (_req, res) => {
+  app.post("/api/test/analyze-persona-impacts", async (req, res) => {
+    const personas = normalizePersonas(req.body?.personas);
+    if (personas.length === 0) {
+      res.status(400).json({ error: "Request body must include personas[] array." });
+      return;
+    }
+
+    const issue = isRecord(req.body?.issue) ? (req.body.issue as Issue) : undefined;
+    const analysis = isRecord(req.body?.analysis)
+      ? (req.body.analysis as IssueAnalysis)
+      : undefined;
+    const project = isRecord(req.body?.project) ? req.body.project : undefined;
+
+    let demoHtml =
+      typeof req.body?.assets?.demoHtml === "string" ? req.body.assets.demoHtml : "";
+    let updatedHtml =
+      typeof req.body?.assets?.updatedHtml === "string" ? req.body.assets.updatedHtml : "";
+    let updatedHtmlDiff =
+      typeof req.body?.assets?.updatedHtmlDiff === "string"
+        ? req.body.assets.updatedHtmlDiff
+        : "";
+    const changeSummary = Array.isArray(req.body?.assets?.changeSummary)
+      ? req.body.assets.changeSummary.filter((item: unknown) => typeof item === "string")
+      : [];
+
+    if (!demoHtml) {
+      demoHtml = await loadDemoHtml();
+    }
+    if (!updatedHtml) {
+      updatedHtml = await loadSuggestionHtml();
+    }
+    if (!updatedHtmlDiff && demoHtml && updatedHtml) {
+      updatedHtmlDiff = buildHtmlDiff(demoHtml, updatedHtml);
+    }
+
+    try {
+      const personaImpacts = await analyzePersonaImpactsWithGemini({
+        personas,
+        issue,
+        analysis,
+        project,
+        assets: {
+          demoHtml,
+          updatedHtml,
+          updatedHtmlDiff,
+          changeSummary,
+        },
+      });
+
+      res.status(200).json({
+        personaImpacts,
+        meta: {
+          personasUsed: personas.length,
+          hasDemoHtml: Boolean(demoHtml),
+          hasUpdatedHtml: Boolean(updatedHtml),
+          hasDiff: Boolean(updatedHtmlDiff),
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to analyze persona impacts.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/persona-impact-jobs/:id", async (req, res) => {
+    const jobId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!jobId) {
+      res.status(400).json({ error: "Missing job id." });
+      return;
+    }
+
+    try {
+      const job = await fetchPersonaImpactJob(jobId);
+      if (!job) {
+        res.status(404).json({ error: "Persona impact job not found." });
+        return;
+      }
+      res.status(200).json({
+        status: job.status,
+        personaImpacts: job.result ?? [],
+        error: job.error ?? null,
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to fetch persona impact job.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/test/persona-impact-job", async (req, res) => {
+    const projectId =
+      typeof req.body?.projectId === "string" ? req.body.projectId.trim() : "default";
+
+    try {
+      const personas = await fetchLatestPersonas(projectId, 10);
+      if (personas.length === 0) {
+        res.status(400).json({ error: "No personas available for test job." });
+        return;
+      }
+
+      const issue = isRecord(req.body?.issue) ? (req.body.issue as Issue) : undefined;
+      const analysis = isRecord(req.body?.analysis)
+        ? (req.body.analysis as IssueAnalysis)
+        : undefined;
+      const project = isRecord(req.body?.project) ? req.body.project : { id: projectId };
+      const changeSummary = Array.isArray(req.body?.assets?.changeSummary)
+        ? req.body.assets.changeSummary.filter((item: unknown) => typeof item === "string")
+        : ["Generated from suggestion_output.html"];
+
+      const demoHtml = await loadDemoHtml();
+      const updatedHtml = await loadSuggestionHtml();
+      const updatedHtmlDiff = buildHtmlDiff(demoHtml, updatedHtml);
+
+      const job = await createPersonaImpactJob(
+        {
+          personas,
+          issue,
+          analysis,
+          project,
+          assets: {
+            demoHtml,
+            updatedHtmlDiff,
+            changeSummary,
+          },
+        },
+        projectId,
+      );
+
+      void runPersonaImpactJob(job.id);
+
+      res.status(200).json({
+        personaImpactJobId: job.id,
+        meta: {
+          personasUsed: personas.length,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to create persona impact test job.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/persona-impact-jobs/:id/run", async (req, res) => {
+    const jobId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!jobId) {
+      res.status(400).json({ error: "Missing job id." });
+      return;
+    }
+
+    try {
+      const job = await runPersonaImpactJob(jobId);
+      res.status(200).json({
+        status: job.status,
+        personaImpacts: job.result ?? [],
+        error: job.error ?? null,
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to run persona impact job.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/test/suggestion-output", async (_req, res) => {
     const html = await loadSuggestionHtml();
     if (!html) {
       res.status(404).json({

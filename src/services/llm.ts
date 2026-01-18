@@ -13,6 +13,7 @@ import type {
   UiSuggestion,
   UiSuggestionRequest,
 } from "../types/issues";
+import type { PersonaImpact, PersonaImpactRequest } from "../types/personas";
 
 const GEMINI_MODEL = "gemini-3-flash-preview";
 
@@ -110,6 +111,66 @@ ${screenshots.length ? `${screenshots.length} screenshot(s) provided.` : "None."
 
 Current demo HTML:
 ${demoHtml}
+  `.trim();
+};
+
+const buildPersonaImpactPrompt = (payload: PersonaImpactRequest) => {
+  const personas = payload.personas.map((persona) => ({
+    id: persona.id,
+    name: persona.name,
+    description: persona.description,
+    rules: persona.rules,
+    metrics: persona.metrics,
+    sampleSize: persona.sampleSize,
+    rangeStart: persona.rangeStart,
+    rangeEnd: persona.rangeEnd,
+  }));
+
+  const updatedHtmlDiff = payload.assets?.updatedHtmlDiff ?? "";
+  const updatedHtml = payload.assets?.updatedHtml ?? "";
+
+  return `
+You are a UX analytics assistant. You evaluate how a proposed UI change affects different personas.
+Return JSON with shape:
+{
+  "impacts": [
+    {
+      "personaName": string,
+      "summary": string,
+      "signals": string[],
+      "confidence": "low"|"medium"|"high"
+    }
+  ]
+}
+
+Constraints:
+- Be concise and grounded in the persona metrics.
+- Use comparative language when possible (increase, decrease, likely unchanged).
+- If impact is unclear, say so explicitly.
+
+Project:
+${JSON.stringify(payload.project ?? {}, null, 2)}
+
+Issue context:
+${JSON.stringify(payload.issue ?? {}, null, 2)}
+
+Issue analysis:
+${JSON.stringify(payload.analysis ?? {}, null, 2)}
+
+Personas:
+${JSON.stringify(personas, null, 2)}
+
+Original demo HTML:
+${payload.assets?.demoHtml ?? ""}
+
+Updated HTML diff (preferred, may be empty if not provided):
+${updatedHtmlDiff}
+
+Updated HTML (fallback if diff is missing):
+${updatedHtml}
+
+Change summary:
+${JSON.stringify(payload.assets?.changeSummary ?? [], null, 2)}
   `.trim();
 };
 
@@ -277,6 +338,60 @@ const sanitizeUiSuggestion = (raw: unknown): UiSuggestion | null => {
   };
 };
 
+const sanitizePersonaImpacts = (
+  personas: PersonaImpactRequest["personas"],
+  raw: unknown,
+): PersonaImpact[] => {
+  if (typeof raw !== "object" || raw === null || !("impacts" in raw)) {
+    return [];
+  }
+
+  const impacts = (raw as { impacts?: unknown }).impacts;
+  if (!Array.isArray(impacts)) {
+    return [];
+  }
+
+  const personaNames = new Set(personas.map((persona) => persona.name));
+  const personaIds = new Map(
+    personas
+      .filter((persona) => persona.id)
+      .map((persona) => [persona.name, persona.id as string]),
+  );
+
+  return impacts
+    .map((impact) => {
+      if (typeof impact !== "object" || impact === null) {
+        return null;
+      }
+      const entry = impact as Partial<PersonaImpact>;
+      const personaName =
+        typeof entry.personaName === "string" ? entry.personaName.trim() : "";
+      if (!personaName || !personaNames.has(personaName)) {
+        return null;
+      }
+      const summary = typeof entry.summary === "string" ? entry.summary.trim() : "";
+      if (!summary) {
+        return null;
+      }
+      const signals = Array.isArray(entry.signals)
+        ? entry.signals.filter((item) => typeof item === "string")
+        : [];
+      const confidence =
+        entry.confidence === "high" || entry.confidence === "medium" || entry.confidence === "low"
+          ? entry.confidence
+          : "low";
+      const sanitized: PersonaImpact = {
+        personaId: personaIds.get(personaName),
+        personaName,
+        summary,
+        signals,
+        confidence,
+      };
+      return sanitized;
+    })
+    .filter((impact): impact is PersonaImpact => impact !== null);
+};
+
 export const analyzeIssuesWithGemini = async (
   payload: IssueAnalysisRequest,
 ): Promise<IssueAnalysis[]> => {
@@ -343,5 +458,37 @@ export const suggestUiImprovementWithGemini = async (
     return sanitizeUiSuggestion(parsed);
   } catch {
     return null;
+  }
+};
+
+export const analyzePersonaImpactsWithGemini = async (
+  payload: PersonaImpactRequest,
+): Promise<PersonaImpact[]> => {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY.");
+  }
+
+  const prompt = buildPersonaImpactPrompt(payload);
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      systemInstruction: "You assess persona-level impact for UI changes.",
+      responseMimeType: "application/json",
+    },
+  });
+
+  const text = extractText(response);
+  if (!text) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return sanitizePersonaImpacts(payload.personas, parsed);
+  } catch {
+    return [];
   }
 };
