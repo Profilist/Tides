@@ -1,12 +1,11 @@
-import React from 'react';
-import { 
-  Type, 
+import {
+  Type,
   Square,
   PenTool,
   Image as ImageIcon,
   LayoutTemplate,
   Code2,
-  Layers
+  Layers,
 } from 'lucide-react';
 import type { TLShape } from 'tldraw';
 

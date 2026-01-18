@@ -1,4 +1,3 @@
-import React from 'react';
 import { Tldraw, Editor } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { HtmlPreviewShapeUtil } from '../../shapes/HtmlPreviewShapeUtil';

@@ -1,26 +1,31 @@
 import { useState, useRef, useEffect } from 'react';
-import type { Editor, TLShapeId } from 'tldraw';
+import type { Editor, TLShapeId, TLParentId } from 'tldraw';
 import { ChevronDown } from 'lucide-react';
+import type { IndexKey } from '@tldraw/utils';
+import { getIndexAbove, getIndexBelow } from '@tldraw/utils';
 import { getShapeIcon } from '../../utils/shapeUtils';
 
 interface DragState {
   draggedShapeId: TLShapeId;
-  draggedParentId: TLShapeId | null;
+  draggedParentId: TLParentId | null;
 }
 
 interface PagesListProps {
   shapeIds: TLShapeId[];
   depth: number;
   editor: Editor;
-  parentId: TLShapeId | null;
+  parentId: TLParentId | null;
   onContextMenu?: (e: React.MouseEvent, shapeIds: TLShapeId[]) => void;
 }
 
 export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onContextMenu }: PagesListProps) {
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [dragOverId, setDragOverId] = useState<{ id: TLShapeId; position: 'before' | 'after' | 'inside' } | null>(null);
+  const [dragOverId, setDragOverId] = useState<{
+    id: TLParentId;
+    position: 'before' | 'after' | 'inside';
+  } | null>(null);
 
-  const handleDragStart = (shapeId: TLShapeId, draggedParentId: TLShapeId | null) => {
+  const handleDragStart = (shapeId: TLShapeId, draggedParentId: TLParentId | null) => {
     setDragState({ draggedShapeId: shapeId, draggedParentId });
   };
 
@@ -29,7 +34,11 @@ export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onCon
     setDragOverId(null);
   };
 
-  const handleDrop = (draggedId: TLShapeId, targetId: TLShapeId | null, dropPosition: 'before' | 'after' | 'inside') => {
+  const handleDrop = (
+    draggedId: TLShapeId,
+    targetId: TLParentId | null,
+    dropPosition: 'before' | 'after' | 'inside',
+  ) => {
     if (!dragState) return;
 
     const draggedShape = editor.getShape(draggedId);
@@ -52,29 +61,32 @@ export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onCon
       return false;
     };
 
-    if (targetId && dropPosition === 'inside' && isDescendant(draggedId, targetId)) {
-      return; // Can't drop into own descendants
+    if (targetId && dropPosition === 'inside') {
+      const targetShape = editor.getShape(targetId as TLShapeId);
+      if (targetShape && isDescendant(draggedId, targetShape.id)) {
+        return; // Can't drop into own descendants
+      }
     }
 
     try {
-      let newParentId: TLShapeId;
-      let insertIndex: string;
+      let newParentId: TLParentId;
+      let insertIndex: IndexKey;
 
       if (dropPosition === 'inside' && targetId) {
         // Dropping inside a group/frame
-        const targetShape = editor.getShape(targetId);
+        const targetShape = editor.getShape(targetId as TLShapeId);
         if (targetShape && (targetShape.type === 'group' || targetShape.type === 'frame')) {
           newParentId = targetId;
           // Append at the end
           const siblings = editor.getSortedChildIdsForParent(targetId);
           if (siblings.length === 0) {
-            insertIndex = editor.getHighestIndexForParent(targetId);
+            insertIndex = getIndexAbove(null);
           } else {
             const lastSibling = editor.getShape(siblings[siblings.length - 1]);
             if (lastSibling) {
-              insertIndex = editor.getIndexAfter(lastSibling.id);
+              insertIndex = getIndexAbove(lastSibling.index);
             } else {
-              insertIndex = editor.getHighestIndexForParent(targetId);
+              insertIndex = getIndexAbove(null);
             }
           }
         } else {
@@ -91,22 +103,24 @@ export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onCon
         
         const siblings = editor.getSortedChildIdsForParent(newParentId);
         
-        if (targetId && siblings.includes(targetId)) {
-          const targetShape = editor.getShape(targetId);
+        if (targetId && siblings.includes(targetId as TLShapeId)) {
+          const targetShape = editor.getShape(targetId as TLShapeId);
           if (targetShape) {
             if (dropPosition === 'before') {
               // Insert before target
-              insertIndex = editor.getIndexBefore(targetShape.id);
+              insertIndex = getIndexBelow(targetShape.index);
             } else {
               // Insert after target
-              insertIndex = editor.getIndexAfter(targetShape.id);
+              insertIndex = getIndexAbove(targetShape.index);
             }
           } else {
-            insertIndex = editor.getHighestIndexForParent(newParentId);
+            insertIndex = getIndexAbove(null);
           }
         } else {
           // Append at the end
-          insertIndex = editor.getHighestIndexForParent(newParentId);
+          const lastSibling = siblings[siblings.length - 1];
+          const lastShape = lastSibling ? editor.getShape(lastSibling) : undefined;
+          insertIndex = lastShape ? getIndexAbove(lastShape.index) : getIndexAbove(null);
         }
       }
 
@@ -138,7 +152,10 @@ export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onCon
             const rect = e.currentTarget.getBoundingClientRect();
             const y = e.clientY;
             if (y < rect.top || y > rect.bottom) {
-              if (dragOverId?.position === 'before' && dragOverId.id === (shapeIds[0] || editor.getCurrentPageId())) {
+              if (
+                dragOverId?.position === 'before' &&
+                dragOverId.id === (shapeIds[0] || editor.getCurrentPageId())
+              ) {
                 setDragOverId(null);
               }
             }
@@ -150,16 +167,16 @@ export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onCon
               // Move to root level (current page)
               const pageId = editor.getCurrentPageId();
               const siblings = editor.getSortedChildIdsForParent(pageId);
-              const insertIndex = siblings.length > 0 
-                ? editor.getIndexAfter(siblings[siblings.length - 1])
-                : editor.getHighestIndexForParent(pageId);
+              const lastSibling = siblings[siblings.length - 1];
+              const lastShape = lastSibling ? editor.getShape(lastSibling) : undefined;
+              const insertIndex = lastShape ? getIndexAbove(lastShape.index) : getIndexAbove(null);
               editor.reparentShapes([dragState.draggedShapeId], pageId, insertIndex);
               handleDragEnd();
             }
           }}
         />
       )}
-      {shapeIds.map((shapeId, index) => (
+      {shapeIds.map((shapeId) => (
         <PageItemWithDragDrop
           key={shapeId}
           shapeId={shapeId}
@@ -199,7 +216,7 @@ export function PagesListWithDragDrop({ shapeIds, depth, editor, parentId, onCon
               } else if (depth === 0 && dragState.draggedParentId !== null) {
                 // Drop at root level when list is empty
                 const pageId = editor.getCurrentPageId();
-                const insertIndex = editor.getHighestIndexForParent(pageId);
+                const insertIndex = getIndexAbove(null);
                 editor.reparentShapes([dragState.draggedShapeId], pageId, insertIndex);
               }
               handleDragEnd();
@@ -215,14 +232,18 @@ interface PageItemProps {
   shapeId: TLShapeId;
   depth: number;
   editor: Editor;
-  parentId: TLShapeId | null;
+  parentId: TLParentId | null;
   dragState: DragState | null;
-  dragOverId: { id: TLShapeId; position: 'before' | 'after' | 'inside' } | null;
-  onDragStart: (shapeId: TLShapeId, parentId: TLShapeId | null) => void;
+  dragOverId: { id: TLParentId; position: 'before' | 'after' | 'inside' } | null;
+  onDragStart: (shapeId: TLShapeId, parentId: TLParentId | null) => void;
   onDragEnd: () => void;
-  onDragOver: (id: TLShapeId, position: 'before' | 'after' | 'inside') => void;
+  onDragOver: (id: TLParentId, position: 'before' | 'after' | 'inside') => void;
   onDragLeave: () => void;
-  onDrop: (draggedId: TLShapeId, targetId: TLShapeId | null, dropPosition: 'before' | 'after' | 'inside') => void;
+  onDrop: (
+    draggedId: TLShapeId,
+    targetId: TLParentId | null,
+    dropPosition: 'before' | 'after' | 'inside',
+  ) => void;
   onContextMenu?: (e: React.MouseEvent, shapeIds: TLShapeId[]) => void;
 }
 
@@ -300,7 +321,7 @@ function PageItemWithDragDrop({
     const updateState = () => {
       const currentShape = editor.getShape(shapeId);
       if (!currentShape) {
-        setShape(null);
+        setShape(undefined);
         return;
       }
 
