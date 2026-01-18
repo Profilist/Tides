@@ -38,6 +38,7 @@ type LlmIssue = {
   evidenceId: string;
   summary: string;
   category: string;
+  pageNames: string[];
 };
 
 const EVENT_TIME_FIELDS = [
@@ -53,6 +54,34 @@ const DEFAULT_WINDOW_DAYS = 7;
 const DEFAULT_TOP_N = 6;
 const DEFAULT_MIN_USERS = 1;
 const DEFAULT_SAMPLE_SIZE = 3;
+const AVAILABLE_PAGES = [
+  "home",
+  "journal",
+  "editorial",
+  "shop",
+  "collection",
+  "product",
+  "cart",
+  "checkout",
+  "shipping",
+  "payment",
+  "order_confirmation",
+  "search",
+  "wishlist",
+  "account",
+  "login",
+  "signup",
+  "about",
+  "size_guide",
+  "returns",
+  "faq",
+  "contact",
+  "privacy",
+  "terms",
+  "store_locator",
+  "new_arrivals",
+  "accessories"
+];
 
 const normalizeTimestamp = (value: string) => {
   const trimmed = value.trim();
@@ -381,6 +410,7 @@ export const deriveIssues = async (
   const aiIssues = await analyzeIssueFindingsWithGemini({
     candidates: llmCandidates,
     meta: { windowA, windowB },
+    availablePages: AVAILABLE_PAGES,
   });
 
   if (aiIssues.length === 0) {
@@ -411,6 +441,7 @@ export const deriveIssues = async (
       sampleB: candidate.sampleB,
       summary: issue.summary,
       category: issue.category,
+      pageNames: issue.pageNames,
       evidence: candidate.evidence,
       samples: candidate.samples,
     });

@@ -37,6 +37,7 @@ const toIssueRow = (issue: Issue) => ({
   sample_b_json: issue.sampleB,
   summary: issue.summary ?? null,
   category: issue.category ?? null,
+  page_names_json: issue.pageNames ?? null,
   evidence_json: issue.evidence ?? null,
   samples_json: issue.samples ?? null,
   derived_at: new Date().toISOString(),

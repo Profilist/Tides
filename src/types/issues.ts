@@ -27,6 +27,7 @@ export type Issue = {
   };
   summary?: string;
   category?: string;
+  pageNames?: string[];
   evidence?: IssueEvidence;
   samples?: IssueSamples;
 };

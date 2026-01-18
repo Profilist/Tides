@@ -73,12 +73,14 @@ type IssueFindingPromptPayload = {
     windowA: IssueWindow;
     windowB: IssueWindow;
   };
+  availablePages: string[];
 };
 
 type IssueFindingOutput = {
   evidenceId: string;
   summary: string;
   category: string;
+  pageNames: string[];
 };
 
 const buildIssueFindingPrompt = (payload: IssueFindingPromptPayload) => `
@@ -89,7 +91,8 @@ Return JSON only with shape:
     {
       "evidenceId": string,
       "summary": string,
-      "category": string
+      "category": string,
+      "pageNames": string[]
     }
   ]
 }
@@ -101,6 +104,8 @@ Rules:
 - "category" should be a concise label (e.g., onboarding, retention, errors, engagement).
 - Avoid sounding like raw instrumentation or tracking diagnostics.
 - Favor behavioral/user-journey issues (e.g., onboarding drop-off after a specific step).
+- "pageNames" must contain zero or more entries from the available pages list only.
+- Do not invent pages; if unsure, return an empty list.
 - If nothing stands out, return { "issues": [] }.
 
 Window A:
@@ -108,6 +113,9 @@ ${JSON.stringify(payload.meta.windowA, null, 2)}
 
 Window B:
 ${JSON.stringify(payload.meta.windowB, null, 2)}
+
+Available pages:
+${JSON.stringify(payload.availablePages, null, 2)}
 
 Candidates:
 ${JSON.stringify(payload.candidates, null, 2)}
@@ -371,6 +379,7 @@ const sanitizeAnalyses = (issues: Issue[], raw: unknown): IssueAnalysis[] => {
 const sanitizeIssueFindings = (
   candidates: IssueFindingCandidate[],
   raw: unknown,
+  availablePages: string[],
 ): IssueFindingOutput[] => {
   if (typeof raw !== "object" || raw === null || !("issues" in raw)) {
     return [];
@@ -381,6 +390,13 @@ const sanitizeIssueFindings = (
   }
 
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+
+  const availablePageSet = new Set(
+    availablePages
+      .filter((page) => typeof page === "string")
+      .map((page) => page.trim())
+      .filter(Boolean),
+  );
 
   return issues
     .map((issue) => {
@@ -395,10 +411,17 @@ const sanitizeIssueFindings = (
       }
       const summary = typeof entry.summary === "string" ? entry.summary.trim() : "";
       const category = typeof entry.category === "string" ? entry.category.trim() : "";
+      const pageNames = Array.isArray(entry.pageNames)
+        ? entry.pageNames
+            .filter((page) => typeof page === "string")
+            .map((page) => page.trim())
+            .filter((page, index, list) => Boolean(page) && list.indexOf(page) === index)
+            .filter((page) => availablePageSet.has(page))
+        : [];
       if (!summary || !category) {
         return null;
       }
-      return { evidenceId, summary, category };
+      return { evidenceId, summary, category, pageNames };
     })
     .filter((issue): issue is IssueFindingOutput => Boolean(issue));
 };
@@ -547,7 +570,7 @@ export const analyzeIssueFindingsWithGemini = async (
 
   try {
     const parsed = JSON.parse(text) as unknown;
-    return sanitizeIssueFindings(payload.candidates, parsed);
+    return sanitizeIssueFindings(payload.candidates, parsed, payload.availablePages);
   } catch {
     return [];
   }
