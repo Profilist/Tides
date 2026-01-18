@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const DEFAULT_TABLE = "amplitude_events";
 const DEFAULT_CHUNK_SIZE = 1000;
+const DEFAULT_FETCH_LIMIT = 50000;
+const MAX_FETCH_LIMIT = 200000;
 
 const getSupabaseClient = (): SupabaseClient => {
   const url = process.env.SUPABASE_URL?.trim();
@@ -83,4 +85,50 @@ export const saveAmplitudeEvents = async (
   }
 
   return { savedEvents: rows.length, skippedEvents };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const parseLimit = (value: unknown) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_FETCH_LIMIT;
+  }
+  return Math.min(Math.max(Math.floor(value), 1), MAX_FETCH_LIMIT);
+};
+
+export const fetchAmplitudeEvents = async (options?: {
+  start?: string;
+  end?: string;
+  limit?: number;
+  eventTypes?: string[];
+  table?: string;
+}): Promise<Record<string, unknown>[]> => {
+  const client = getSupabaseClient();
+  const table = options?.table?.trim() || process.env.AMPLITUDE_EVENTS_TABLE?.trim() || DEFAULT_TABLE;
+  const limit = parseLimit(options?.limit);
+
+  let query = client.from(table).select("payload_json, event_time, event_type");
+
+  if (options?.start) {
+    query = query.gte("event_time", options.start);
+  }
+  if (options?.end) {
+    query = query.lte("event_time", options.end);
+  }
+  if (options?.eventTypes && options.eventTypes.length > 0) {
+    query = query.in("event_type", options.eventTypes);
+  }
+
+  const { data, error } = await query
+    .order("event_time", { ascending: true })
+    .range(0, limit - 1);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? [])
+    .map((row) => (isRecord(row) ? row.payload_json : null))
+    .filter(isRecord);
 };
