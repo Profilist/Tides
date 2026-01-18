@@ -25,6 +25,38 @@ export type Issue = {
     eventCount: number;
     uniqueUsers: number;
   };
+  summary?: string;
+  category?: string;
+  evidence?: IssueEvidence;
+  samples?: IssueSamples;
+};
+
+export type IssueEvidence = {
+  windowA: {
+    eventCount: number;
+    uniqueUsers: number;
+  };
+  windowB: {
+    eventCount: number;
+    uniqueUsers: number;
+  };
+  delta: {
+    eventCount: number;
+    uniqueUsers: number;
+  };
+  deltaPct: {
+    eventCount: number;
+    uniqueUsers: number;
+  };
+};
+
+export type IssueSamples = {
+  events: Array<{
+    id: string;
+    timestamp: string;
+    window: "A" | "B";
+  }>;
+  users: string[];
 };
 
 export type IssueDetectionOptions = {
@@ -35,6 +67,14 @@ export type IssueDetectionOptions = {
   topN?: number;
   windowA?: IssueWindow;
   windowB?: IssueWindow;
+};
+
+export type IssueFindOptions = {
+  windowDays?: number;
+  topN?: number;
+  segmentBy?: string[];
+  minUsers?: number;
+  sampleSize?: number;
 };
 
 export type IssueAnalysis = {

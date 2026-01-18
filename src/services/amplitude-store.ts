@@ -1,4 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { readFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 
 const DEFAULT_TABLE = "amplitude_events";
 const DEFAULT_CHUNK_SIZE = 1000;
@@ -97,16 +99,114 @@ const parseLimit = (value: unknown) => {
   return Math.min(Math.max(Math.floor(value), 1), MAX_FETCH_LIMIT);
 };
 
+const normalizeTimestamp = (value: string) => {
+  const trimmed = value.trim();
+  const match = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/,
+  );
+  if (!match) {
+    return trimmed;
+  }
+  const [, date, time, fractional = ""] = match;
+  const millis = fractional.padEnd(3, "0").slice(0, 3);
+  return `${date}T${time}.${millis}Z`;
+};
+
+const parseDate = (value: unknown) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = normalizeTimestamp(value);
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isWithinRange = (date: Date, start?: string, end?: string) => {
+  if (start) {
+    const startDate = parseDate(start);
+    if (startDate && date < startDate) {
+      return false;
+    }
+  }
+  if (end) {
+    const endDate = parseDate(end);
+    if (endDate && date > endDate) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const readEventsFromFile = async (
+  filePath: string,
+  limit: number,
+  start?: string,
+  end?: string,
+  eventTypes?: string[],
+) => {
+  const resolved = resolvePath(filePath);
+  const content = await readFile(resolved, "utf-8");
+  const events: Record<string, unknown>[] = [];
+  const eventTypeSet =
+    eventTypes && eventTypes.length > 0 ? new Set(eventTypes) : null;
+
+  for (const line of content.split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) {
+      continue;
+    }
+    if (eventTypeSet && typeof parsed.event_type === "string") {
+      if (!eventTypeSet.has(parsed.event_type)) {
+        continue;
+      }
+    }
+    const eventTime = parseDate(parsed.event_time);
+    if (eventTime && !isWithinRange(eventTime, start, end)) {
+      continue;
+    }
+    events.push(parsed);
+    if (events.length >= limit) {
+      break;
+    }
+  }
+
+  return events;
+};
+
 export const fetchAmplitudeEvents = async (options?: {
   start?: string;
   end?: string;
   limit?: number;
   eventTypes?: string[];
   table?: string;
+  localPath?: string;
 }): Promise<Record<string, unknown>[]> => {
-  const client = getSupabaseClient();
-  const table = options?.table?.trim() || process.env.AMPLITUDE_EVENTS_TABLE?.trim() || DEFAULT_TABLE;
   const limit = parseLimit(options?.limit);
+  const localPath =
+    options?.localPath?.trim() || process.env.AMPLITUDE_EVENTS_FILE?.trim();
+  if (localPath) {
+    return readEventsFromFile(
+      localPath,
+      limit,
+      options?.start,
+      options?.end,
+      options?.eventTypes,
+    );
+  }
+
+  const client = getSupabaseClient();
+  const table =
+    options?.table?.trim() ||
+    process.env.AMPLITUDE_EVENTS_TABLE?.trim() ||
+    DEFAULT_TABLE;
 
   let query = client.from(table).select("payload_json, event_time, event_type");
 

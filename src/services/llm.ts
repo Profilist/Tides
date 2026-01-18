@@ -8,8 +8,11 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import type {
   Issue,
+  IssueEvidence,
   IssueAnalysis,
   IssueAnalysisRequest,
+  IssueSamples,
+  IssueWindow,
   UiSuggestion,
   UiSuggestionRequest,
 } from "../types/issues";
@@ -50,6 +53,65 @@ Issues:
 ${JSON.stringify(issues, null, 2)}
 `.trim();
 };
+
+type IssueFindingCandidate = {
+  id: string;
+  eventType: string;
+  segment: Record<string, string>;
+  windowA: IssueWindow;
+  windowB: IssueWindow;
+  evidence: IssueEvidence;
+  samples: IssueSamples;
+  deltaPct: number;
+  direction: Issue["direction"];
+  severity: Issue["severity"];
+};
+
+type IssueFindingPromptPayload = {
+  candidates: IssueFindingCandidate[];
+  meta: {
+    windowA: IssueWindow;
+    windowB: IssueWindow;
+  };
+};
+
+type IssueFindingOutput = {
+  evidenceId: string;
+  summary: string;
+  category: string;
+};
+
+const buildIssueFindingPrompt = (payload: IssueFindingPromptPayload) => `
+You are a product analytics assistant preparing demo-friendly issues. Use candidate evidence to craft plausible, realistic product issues that highlight value beyond basic rule-based detection. If evidence is thin or synthetic, you may generalize into realistic scenarios, but still tie each issue to the provided candidate evidence.
+Return JSON only with shape:
+{
+  "issues": [
+    {
+      "evidenceId": string,
+      "summary": string,
+      "category": string
+    }
+  ]
+}
+
+Rules:
+- Anchor each issue to the provided candidates and evidence.
+- "evidenceId" must match a candidate id exactly.
+- Keep "summary" short and specific (1 sentence).
+- "category" should be a concise label (e.g., onboarding, retention, errors, engagement).
+- Avoid sounding like raw instrumentation or tracking diagnostics.
+- Favor behavioral/user-journey issues (e.g., onboarding drop-off after a specific step).
+- If nothing stands out, return { "issues": [] }.
+
+Window A:
+${JSON.stringify(payload.meta.windowA, null, 2)}
+
+Window B:
+${JSON.stringify(payload.meta.windowB, null, 2)}
+
+Candidates:
+${JSON.stringify(payload.candidates, null, 2)}
+`.trim();
 
 const buildUiSuggestionPrompt = (payload: UiSuggestionRequest) => {
   const issue = {
@@ -306,6 +368,41 @@ const sanitizeAnalyses = (issues: Issue[], raw: unknown): IssueAnalysis[] => {
     .filter((analysis): analysis is IssueAnalysis => Boolean(analysis));
 };
 
+const sanitizeIssueFindings = (
+  candidates: IssueFindingCandidate[],
+  raw: unknown,
+): IssueFindingOutput[] => {
+  if (typeof raw !== "object" || raw === null || !("issues" in raw)) {
+    return [];
+  }
+  const issues = (raw as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) {
+    return [];
+  }
+
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+
+  return issues
+    .map((issue) => {
+      if (typeof issue !== "object" || issue === null) {
+        return null;
+      }
+      const entry = issue as Partial<IssueFindingOutput>;
+      const evidenceId =
+        typeof entry.evidenceId === "string" ? entry.evidenceId.trim() : "";
+      if (!evidenceId || !candidateIds.has(evidenceId)) {
+        return null;
+      }
+      const summary = typeof entry.summary === "string" ? entry.summary.trim() : "";
+      const category = typeof entry.category === "string" ? entry.category.trim() : "";
+      if (!summary || !category) {
+        return null;
+      }
+      return { evidenceId, summary, category };
+    })
+    .filter((issue): issue is IssueFindingOutput => Boolean(issue));
+};
+
 const sanitizeUiSuggestion = (raw: unknown): UiSuggestion | null => {
   if (typeof raw !== "object" || raw === null) {
     return null;
@@ -419,6 +516,38 @@ export const analyzeIssuesWithGemini = async (
   try {
     const parsed = JSON.parse(text) as unknown;
     return sanitizeAnalyses(payload.issues, parsed);
+  } catch {
+    return [];
+  }
+};
+
+export const analyzeIssueFindingsWithGemini = async (
+  payload: IssueFindingPromptPayload,
+): Promise<IssueFindingOutput[]> => {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY.");
+  }
+
+  const prompt = buildIssueFindingPrompt(payload);
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      systemInstruction: "You identify issues using provided evidence only.",
+      responseMimeType: "application/json",
+    },
+  });
+
+  const text = extractText(response);
+  if (!text) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return sanitizeIssueFindings(payload.candidates, parsed);
   } catch {
     return [];
   }

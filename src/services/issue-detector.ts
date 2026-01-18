@@ -9,7 +9,7 @@ type SegmentStats = {
 
 const DEFAULT_WINDOW_DAYS = 7;
 const DEFAULT_TOP_N = 5;
-const DEFAULT_MIN_USERS = 20;
+const DEFAULT_MIN_USERS = 1;
 const DEFAULT_MIN_DELTA_PCT = 20;
 
 const EVENT_TIME_FIELDS = [
@@ -150,7 +150,7 @@ export const deriveIssues = (
   options: IssueDetectionOptions = {},
 ) => {
   const eventType = options.eventType?.trim();
-  const segmentBy = options.segmentBy ?? ["country"];
+  const segmentBy = options.segmentBy ?? ["event_type"];
   const minUsers = options.minUsers ?? DEFAULT_MIN_USERS;
   const minDeltaPct = options.minDeltaPct ?? DEFAULT_MIN_DELTA_PCT;
   const topN = options.topN ?? DEFAULT_TOP_N;

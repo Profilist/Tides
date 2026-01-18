@@ -1,9 +1,10 @@
 import type { Express } from "express";
-import { deriveIssues } from "../services/issue-detector";
+import { deriveIssues } from "../services/issue-find";
 import { fetchAmplitudeEvents } from "../services/amplitude-store.ts";
 import { derivePersonas } from "../services/persona-synthesizer";
+import { saveIssues } from "../services/issue-store";
 import { savePersonas } from "../services/persona-store";
-import type { IssueDetectionOptions } from "../types/issues";
+import type { IssueFindOptions } from "../types/issues";
 import type { PersonaDerivationOptions } from "../types/personas";
 
 const MAX_EVENTS = 200000;
@@ -58,7 +59,7 @@ export const registerInsightRoutes = (app: Express) => {
 
     const issueOptions = (isRecord(req.body?.issueOptions)
       ? req.body.issueOptions
-      : {}) as IssueDetectionOptions;
+      : {}) as IssueFindOptions;
     const personaOptions = (isRecord(req.body?.personaOptions)
       ? req.body.personaOptions
       : {}) as PersonaDerivationOptions;
@@ -71,7 +72,8 @@ export const registerInsightRoutes = (app: Express) => {
         return;
       }
 
-      const issues = deriveIssues(events, issueOptions);
+      const issues = await deriveIssues(events, issueOptions);
+      const issueStorage = await saveIssues(issues);
       const personaResult = derivePersonas(events, personaOptions);
       const personaStorage = await savePersonas(personaResult.personas);
 
@@ -83,6 +85,7 @@ export const registerInsightRoutes = (app: Express) => {
           totalEvents: events.length,
           issueWindowA: issues[0]?.windowA ?? null,
           issueWindowB: issues[0]?.windowB ?? null,
+          issuesSaved: issueStorage.savedIssues,
           personaRangeStart: personaResult.meta.rangeStart,
           personaRangeEnd: personaResult.meta.rangeEnd,
         },
