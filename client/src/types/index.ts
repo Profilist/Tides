@@ -93,3 +93,65 @@ export interface IssuePage {
   screenshots: PageScreenshot[];
 }
 
+export type ChatRole = 'user' | 'assistant';
+
+export type ChatEvidenceMetric = {
+  type: 'metric';
+  title: string;
+  value: string;
+  delta?: string;
+  trend?: 'up' | 'down' | 'flat';
+  caption?: string;
+};
+
+export type ChatEvidenceEventSample = {
+  type: 'event_sample';
+  title: string;
+  events: Array<{
+    id: string;
+    timestamp: string;
+    label?: string;
+  }>;
+};
+
+export type ChatEvidenceNote = {
+  type: 'note';
+  title: string;
+  body: string;
+};
+
+export type ChatEvidenceItem =
+  | ChatEvidenceMetric
+  | ChatEvidenceEventSample
+  | ChatEvidenceNote;
+
+export type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  timestamp: string;
+  evidence?: ChatEvidenceItem[];
+};
+
+export type ChatRequest = {
+  message: string;
+  context?: {
+    suggestionHtml?: string;
+    suggestionSummary?: string | null;
+  };
+};
+
+export type ChatResponse = {
+  reply: {
+    content: string;
+    evidence?: ChatEvidenceItem[];
+  };
+};
+
+export type SuggestionSummaryResponse = {
+  message: {
+    content: string;
+    evidence?: ChatEvidenceItem[];
+  };
+};
+

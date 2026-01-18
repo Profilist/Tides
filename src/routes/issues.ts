@@ -8,6 +8,8 @@ import { fetchPagesWithScreenshots } from "../services/page-store";
 import {
   analyzeIssuesWithGemini,
   analyzePersonaImpactsWithGemini,
+  generateChatResponseWithGemini,
+  generateSuggestionSummaryWithGemini,
   suggestUiImprovementWithGemini,
 } from "../services/llm";
 import {
@@ -62,6 +64,61 @@ const parseNumberParam = (value: unknown) => {
   return null;
 };
 
+const formatPct = (value: number) => `${Math.abs(value).toFixed(1)}%`;
+
+const buildChatEvidence = (
+  issue: Issue,
+  context: { suggestionSummary?: string | null; hasSuggestionHtml: boolean },
+) => {
+  const trend =
+    issue.direction === "increase" ? "up" : issue.direction === "decrease" ? "down" : "flat";
+  const metricEvidence = {
+    type: "metric" as const,
+    title: "Event rate change",
+    value: formatPct(issue.deltaPct),
+    delta: issue.direction === "flat" ? "Flat vs prior window" : `${issue.direction} vs prior window`,
+    trend,
+    caption: issue.eventType,
+  };
+
+  const sampleEvents =
+    issue.samples?.events?.slice(0, 3).map((event) => ({
+      id: event.id,
+      timestamp: event.timestamp,
+      label: `Window ${event.window}`,
+    })) ?? [];
+
+  const eventEvidence =
+    sampleEvents.length > 0
+      ? {
+          type: "event_sample" as const,
+          title: "Event samples",
+          events: sampleEvents,
+        }
+      : {
+          type: "note" as const,
+          title: "Event samples",
+          body: "No sample events available for this issue yet.",
+        };
+
+  const suggestionEvidence =
+    context.hasSuggestionHtml || context.suggestionSummary
+      ? {
+          type: "note" as const,
+          title: "Suggestion context",
+          body:
+            context.suggestionSummary?.trim() ||
+            "A UI suggestion is available for this issue, and the reply is scoped to it.",
+        }
+      : {
+          type: "note" as const,
+          title: "Suggestion context",
+          body: "No UI suggestion is attached yet; the reply is scoped to the issue only.",
+        };
+
+  return [metricEvidence, eventEvidence, suggestionEvidence];
+};
+
 const normalizeScreenshots = (value: unknown) => {
   if (!Array.isArray(value)) {
     return [];
@@ -91,6 +148,13 @@ const normalizePersonas = (value: unknown) => {
     return [];
   }
   return value.filter(isRecord) as PersonaDefinition[];
+};
+
+const normalizeStringArray = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item) => typeof item === "string").map((item) => item.trim());
 };
 
 const loadDemoHtml = async () => {
@@ -317,6 +381,106 @@ export const registerIssueRoutes = (app: Express) => {
     } catch (error) {
       res.status(500).json({
         error: "Failed to suggest UI improvement.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/issues/:id/chat", async (req, res) => {
+    const issueId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!issueId) {
+      res.status(400).json({ error: "Missing issue id." });
+      return;
+    }
+
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!message) {
+      res.status(400).json({ error: "Request body must include a message." });
+      return;
+    }
+
+    const context = isRecord(req.body?.context) ? req.body.context : {};
+    const suggestionSummary =
+      typeof context.suggestionSummary === "string" ? context.suggestionSummary : null;
+    const suggestionHtml = typeof context.suggestionHtml === "string" ? context.suggestionHtml : "";
+
+    try {
+      const issue = await fetchIssueById(issueId);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found." });
+        return;
+      }
+
+      const assistantMessage =
+        (await generateChatResponseWithGemini({
+          issue,
+          userMessage: message,
+          suggestionSummary,
+          suggestionHtml,
+        })) ||
+        issue.summary ||
+        `Users are seeing a ${issue.direction} in ${issue.eventType} for the selected segment.`;
+
+      res.status(200).json({
+        reply: {
+          content: assistantMessage,
+          evidence: buildChatEvidence(issue, {
+            suggestionSummary,
+            hasSuggestionHtml: Boolean(suggestionHtml.trim()),
+          }),
+        },
+        meta: {
+          issueId,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to generate chat response.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/issues/:id/suggestion-summary", async (req, res) => {
+    const issueId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!issueId) {
+      res.status(400).json({ error: "Missing issue id." });
+      return;
+    }
+
+    const suggestionHtml =
+      typeof req.body?.suggestionHtml === "string" ? req.body.suggestionHtml.trim() : "";
+    if (!suggestionHtml) {
+      res.status(400).json({ error: "Request body must include suggestionHtml." });
+      return;
+    }
+    const changeSummary = normalizeStringArray(req.body?.changeSummary);
+
+    try {
+      const issue = await fetchIssueById(issueId);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found." });
+        return;
+      }
+
+      const summary = await generateSuggestionSummaryWithGemini({
+        issue,
+        suggestionHtml,
+        changeSummary,
+      });
+
+      res.status(200).json({
+        message: {
+          content: summary.content,
+          evidence: summary.evidence,
+        },
+        meta: {
+          issueId,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to generate suggestion summary.",
         details: error instanceof Error ? error.message : String(error),
       });
     }

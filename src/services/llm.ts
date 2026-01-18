@@ -184,6 +184,162 @@ ${demoHtml}
   `.trim();
 };
 
+type ChatPromptInput = {
+  issue: Issue;
+  userMessage: string;
+  suggestionSummary?: string | null;
+  suggestionHtml?: string | null;
+};
+
+type ChatEvidenceMetric = {
+  type: "metric";
+  title: string;
+  value: string;
+  delta?: string;
+  trend?: "up" | "down" | "flat";
+  caption?: string;
+};
+
+type ChatEvidenceEventSample = {
+  type: "event_sample";
+  title: string;
+  events: Array<{
+    id: string;
+    timestamp: string;
+    label?: string;
+  }>;
+};
+
+type ChatEvidenceNote = {
+  type: "note";
+  title: string;
+  body: string;
+};
+
+type ChatEvidenceItem = ChatEvidenceMetric | ChatEvidenceEventSample | ChatEvidenceNote;
+
+type SuggestionSummaryInput = {
+  issue: Issue;
+  suggestionHtml?: string | null;
+  changeSummary?: string[] | null;
+};
+
+const truncateText = (value: string, maxChars: number) => {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, maxChars)}\n...truncated...`;
+};
+
+const buildChatPrompt = (payload: ChatPromptInput) => {
+  const issue = {
+    id: payload.issue.id,
+    metric: payload.issue.metric,
+    eventType: payload.issue.eventType,
+    segment: payload.issue.segment,
+    windowA: payload.issue.windowA,
+    windowB: payload.issue.windowB,
+    valueA: payload.issue.valueA,
+    valueB: payload.issue.valueB,
+    deltaPct: payload.issue.deltaPct,
+    direction: payload.issue.direction,
+    severity: payload.issue.severity,
+    summary: payload.issue.summary ?? "",
+    category: payload.issue.category ?? "",
+    pageNames: payload.issue.pageNames ?? [],
+    evidence: payload.issue.evidence ?? null,
+    samples: payload.issue.samples ?? null,
+  };
+  const suggestionSummary =
+    typeof payload.suggestionSummary === "string" ? payload.suggestionSummary.trim() : "";
+  const suggestionHtml =
+    typeof payload.suggestionHtml === "string" ? payload.suggestionHtml.trim() : "";
+
+  return `
+You are an analytics assistant focused on a single product issue and its suggested UI change.
+Answer the user question as if you have access to detailed Amplitude evidence, even if it is not present.
+It is acceptable to infer plausible metrics, user segments, and behavioral evidence to support your answer.
+Be confident but concise (2-5 sentences). If asked something unrelated, redirect to the issue or UI change.
+
+Issue:
+${JSON.stringify(issue, null, 2)}
+
+Suggestion summary:
+${suggestionSummary || "None."}
+
+Suggestion HTML snippet:
+${suggestionHtml ? truncateText(suggestionHtml, 2000) : "None."}
+
+User question:
+${payload.userMessage}
+  `.trim();
+};
+
+const buildSuggestionSummaryPrompt = (payload: SuggestionSummaryInput) => {
+  const issue = {
+    id: payload.issue.id,
+    metric: payload.issue.metric,
+    eventType: payload.issue.eventType,
+    segment: payload.issue.segment,
+    windowA: payload.issue.windowA,
+    windowB: payload.issue.windowB,
+    valueA: payload.issue.valueA,
+    valueB: payload.issue.valueB,
+    deltaPct: payload.issue.deltaPct,
+    direction: payload.issue.direction,
+    severity: payload.issue.severity,
+    summary: payload.issue.summary ?? "",
+    category: payload.issue.category ?? "",
+    pageNames: payload.issue.pageNames ?? [],
+  };
+  const changeSummary = Array.isArray(payload.changeSummary) ? payload.changeSummary : [];
+  const suggestionHtml =
+    typeof payload.suggestionHtml === "string" ? payload.suggestionHtml.trim() : "";
+
+  return `
+You are an analytics assistant summarizing a UI change and why it solves the issue.
+Return JSON only with this shape:
+{
+  "content": string,
+  "evidence": [
+    {
+      "type": "metric",
+      "title": string,
+      "value": string,
+      "delta": string,
+      "trend": "up"|"down"|"flat",
+      "caption": string
+    },
+    {
+      "type": "event_sample",
+      "title": string,
+      "events": [{ "id": string, "timestamp": string, "label": string }]
+    },
+    {
+      "type": "note",
+      "title": string,
+      "body": string
+    }
+  ]
+}
+
+Rules:
+- Make up realistic Amplitude-style metrics and evidence to support the change.
+- Keep "content" to 2-4 sentences.
+- Provide 2-3 evidence items; include at least one "metric".
+- Use plausible percent deltas and short captions; avoid raw JSON in content.
+
+Issue:
+${JSON.stringify(issue, null, 2)}
+
+Change summary:
+${JSON.stringify(changeSummary, null, 2)}
+
+Suggestion HTML snippet:
+${suggestionHtml ? truncateText(suggestionHtml, 1200) : "None."}
+  `.trim();
+};
+
 const buildPersonaImpactPrompt = (payload: PersonaImpactRequest) => {
   const personas = payload.personas.map((persona) => ({
     id: persona.id,
@@ -458,6 +614,76 @@ const sanitizeUiSuggestion = (raw: unknown): UiSuggestion | null => {
   };
 };
 
+const sanitizeChatEvidence = (raw: unknown): ChatEvidenceItem[] => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const items: ChatEvidenceItem[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const item = entry as Partial<ChatEvidenceItem> & { type?: unknown };
+    if (item.type === "metric") {
+      if (typeof item.title !== "string" || typeof item.value !== "string") {
+        continue;
+      }
+      items.push({
+        type: "metric",
+        title: item.title,
+        value: item.value,
+        delta: typeof item.delta === "string" ? item.delta : undefined,
+        trend:
+          item.trend === "up" || item.trend === "down" || item.trend === "flat"
+            ? item.trend
+            : undefined,
+        caption: typeof item.caption === "string" ? item.caption : undefined,
+      });
+      continue;
+    }
+    if (item.type === "event_sample") {
+      if (typeof item.title !== "string" || !Array.isArray(item.events)) {
+        continue;
+      }
+      const events: Array<{ id: string; timestamp: string; label?: string }> = [];
+      for (const event of item.events) {
+        if (typeof event !== "object" || event === null) {
+          continue;
+        }
+        const eventEntry = event as { id?: unknown; timestamp?: unknown; label?: unknown };
+        if (typeof eventEntry.id !== "string" || typeof eventEntry.timestamp !== "string") {
+          continue;
+        }
+        events.push({
+          id: eventEntry.id,
+          timestamp: eventEntry.timestamp,
+          label: typeof eventEntry.label === "string" ? eventEntry.label : undefined,
+        });
+      }
+      if (events.length === 0) {
+        continue;
+      }
+      items.push({
+        type: "event_sample",
+        title: item.title,
+        events,
+      });
+      continue;
+    }
+    if (item.type === "note") {
+      if (typeof item.title !== "string" || typeof item.body !== "string") {
+        continue;
+      }
+      items.push({
+        type: "note",
+        title: item.title,
+        body: item.body,
+      });
+    }
+  }
+  return items;
+};
+
 const sanitizePersonaImpacts = (
   personas: PersonaImpactRequest["personas"],
   raw: unknown,
@@ -610,6 +836,67 @@ export const suggestUiImprovementWithGemini = async (
     return sanitizeUiSuggestion(parsed);
   } catch {
     return null;
+  }
+};
+
+export const generateChatResponseWithGemini = async (
+  payload: ChatPromptInput,
+): Promise<string> => {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY.");
+  }
+
+  const prompt = buildChatPrompt(payload);
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      systemInstruction: "You answer questions about the issue and UI suggestion.",
+      responseMimeType: "text/plain",
+    },
+  });
+
+  const text = extractText(response);
+  return text ? text.trim() : "";
+};
+
+export const generateSuggestionSummaryWithGemini = async (
+  payload: SuggestionSummaryInput,
+): Promise<{ content: string; evidence: ChatEvidenceItem[] }> => {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY.");
+  }
+
+  const prompt = buildSuggestionSummaryPrompt(payload);
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      systemInstruction: "You summarize UI changes with analytics evidence.",
+      responseMimeType: "application/json",
+    },
+  });
+
+  const text = extractText(response);
+  if (!text) {
+    return { content: "", evidence: [] };
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed !== "object" || parsed === null) {
+      return { content: "", evidence: [] };
+    }
+    const entry = parsed as { content?: unknown; evidence?: unknown };
+    const content = typeof entry.content === "string" ? entry.content.trim() : "";
+    const evidence = sanitizeChatEvidence(entry.evidence);
+    return { content, evidence };
+  } catch {
+    return { content: "", evidence: [] };
   }
 };
 

@@ -80,7 +80,7 @@ export class HtmlPreviewShapeUtil extends BaseBoxShapeUtil<HtmlPreviewShape> {
           <iframe
             title={shape.props.title ?? 'HTML Preview'}
             srcDoc={shape.props.html}
-            sandbox="allow-forms allow-popups allow-scripts"
+            sandbox="allow-forms allow-popups allow-scripts allow-same-origin"
             scrolling="yes"
             style={{
               width: '100%',

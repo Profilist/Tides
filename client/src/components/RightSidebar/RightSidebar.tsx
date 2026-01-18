@@ -1,7 +1,13 @@
 import { X, Sparkles } from 'lucide-react';
 import { DetailsPanel } from './DetailsPanel';
 import { ChatPanel } from './ChatPanel';
-import type { SelectedShape, ChatContextShape, Issue, PersonaImpact } from '../../types/index';
+import type {
+  SelectedShape,
+  ChatContextShape,
+  Issue,
+  PersonaImpact,
+  ChatMessage,
+} from '../../types/index';
 
 type TabType = 'details' | 'chat';
 
@@ -11,6 +17,11 @@ interface RightSidebarProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
   selectedIssue: Issue | null;
+  suggestionContext: {
+    html?: string;
+    summary?: string | null;
+  } | null;
+  suggestionMessage: ChatMessage | null;
   issuesError: string | null;
   selectedShapes: SelectedShape[];
   chatContextShapes: ChatContextShape[];
@@ -31,6 +42,8 @@ export function RightSidebar({
   activeTab,
   onTabChange,
   selectedIssue,
+  suggestionContext,
+  suggestionMessage,
   issuesError,
   selectedShapes,
   chatContextShapes,
@@ -102,6 +115,9 @@ export function RightSidebar({
           <ChatPanel
             selectedShapes={selectedShapes}
             chatContextShapes={chatContextShapes}
+            selectedIssue={selectedIssue}
+            suggestionContext={suggestionContext}
+            suggestionMessage={suggestionMessage}
             isTyping={isTyping}
             setIsTyping={setIsTyping}
             onClearSelection={onClearSelection}

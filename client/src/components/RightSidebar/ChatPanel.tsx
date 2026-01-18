@@ -10,17 +10,31 @@ import {
   Loader2,
   Check,
 } from 'lucide-react';
-import type { SelectedShape, ChatContextShape, PersonaImpact } from '../../types';
+import type {
+  SelectedShape,
+  ChatContextShape,
+  PersonaImpact,
+  Issue,
+  ChatMessage,
+  ChatEvidenceItem,
+  ChatRequest,
+  ChatResponse,
+} from '../../types';
 import { getShapeIcon } from '../../utils/shapeUtils';
 import { ContextPill } from '../../../src/components/common/ContextPill';
 import { IconButton } from '../../../src/components/common/IconButton';
-import { CopyButton } from '../../../src/components/common/CopyButton';
 
 type ContextMode = 'presentation' | 'performance' | 'team' | null;
 
 interface ChatPanelProps {
   selectedShapes: SelectedShape[];
   chatContextShapes: ChatContextShape[];
+  selectedIssue: Issue | null;
+  suggestionContext: {
+    html?: string;
+    summary?: string | null;
+  } | null;
+  suggestionMessage: ChatMessage | null;
   isTyping: boolean;
   setIsTyping: (typing: boolean) => void;
   onClearSelection: () => void;
@@ -35,6 +49,9 @@ interface ChatPanelProps {
 export function ChatPanel({
   selectedShapes,
   chatContextShapes,
+  selectedIssue,
+  suggestionContext,
+  suggestionMessage,
   isTyping,
   setIsTyping,
   onClearSelection,
@@ -51,6 +68,13 @@ export function ChatPanel({
   const [animationActive, setAnimationActive] = useState(false);
   const prevGeneratingRef = useRef(isGeneratingSuggestion);
   const [phraseIndices, setPhraseIndices] = useState<number[]>([0, 0, 0, 0]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const lastIssueIdRef = useRef<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const lastSuggestionMessageIdRef = useRef<string | null>(null);
 
   const personaAgents = useMemo(() => Array.from({ length: 4 }, (_, index) => index), []);
   const phrases = useMemo(
@@ -111,6 +135,33 @@ export function ChatPanel({
     [],
   );
 
+  const createMessageId = () =>
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `msg_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  useEffect(() => {
+    const nextIssueId = selectedIssue?.id ?? null;
+    if (lastIssueIdRef.current !== nextIssueId) {
+      setMessages([]);
+      setChatError(null);
+      lastIssueIdRef.current = nextIssueId;
+      lastSuggestionMessageIdRef.current = null;
+    }
+  }, [selectedIssue?.id]);
+
+  useEffect(() => {
+    if (!suggestionMessage?.id || suggestionMessage.id === lastSuggestionMessageIdRef.current) {
+      return;
+    }
+    setMessages((prev) => [...prev, suggestionMessage]);
+    lastSuggestionMessageIdRef.current = suggestionMessage.id;
+  }, [suggestionMessage]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages, isSending]);
+
   useEffect(() => {
     const wasGenerating = prevGeneratingRef.current;
     if (!wasGenerating && isGeneratingSuggestion) {
@@ -162,6 +213,101 @@ export function ChatPanel({
       }
     };
   }, [animationActive, phrases.length]);
+
+  const canSend = Boolean(inputValue.trim()) && !isSending && Boolean(selectedIssue);
+
+  const handleSend = async () => {
+    if (!selectedIssue || !inputValue.trim() || isSending) {
+      return;
+    }
+    const content = inputValue.trim();
+    const userMessage: ChatMessage = {
+      id: createMessageId(),
+      role: 'user',
+      content,
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setInputValue('');
+    setIsSending(true);
+    setChatError(null);
+
+    try {
+      const payload: ChatRequest = {
+        message: content,
+        context: {
+          suggestionHtml: suggestionContext?.html,
+          suggestionSummary: suggestionContext?.summary ?? null,
+        },
+      };
+      const response = await fetch(`/api/issues/${selectedIssue.id}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const details = await response.text();
+        throw new Error(`Request failed (${response.status}): ${details.slice(0, 200)}`);
+      }
+      const data = (await response.json()) as ChatResponse;
+      const assistantMessage: ChatMessage = {
+        id: createMessageId(),
+        role: 'assistant',
+        content: data.reply?.content ?? 'Thanks for the question. Let me dig into that.',
+        timestamp: new Date().toISOString(),
+        evidence: data.reply?.evidence ?? [],
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Failed to send chat message', error);
+      setChatError(
+        error instanceof Error ? error.message : 'Failed to send message. Try again.',
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const renderEvidence = (item: ChatEvidenceItem) => {
+    switch (item.type) {
+      case 'metric':
+        return (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">{item.title}</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-sm font-semibold text-slate-900">{item.value}</span>
+              {item.delta && (
+                <span className="text-[10px] text-slate-500 font-medium">{item.delta}</span>
+              )}
+            </div>
+            {item.caption && <div className="mt-1 text-[10px] text-slate-400">{item.caption}</div>}
+          </div>
+        );
+      case 'event_sample':
+        return (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">{item.title}</div>
+            <ul className="mt-1 space-y-1">
+              {item.events.map((event) => (
+                <li key={event.id} className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[10px] text-slate-500">{event.id}</span>
+                  <span className="text-[10px] text-slate-400">{event.label ?? event.timestamp}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      case 'note':
+        return (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">{item.title}</div>
+            <div className="mt-1 text-[11px] text-slate-600">{item.body}</div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <>
@@ -219,37 +365,51 @@ export function ChatPanel({
           </button>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Sparkles size={12} className="text-[#1e61f0]" />
-            <span className="text-xs font-medium text-slate-500">Generating suggestions...</span>
-          </div>
-          <div className="text-sm text-slate-800 leading-relaxed space-y-2">
-            <p>
-              I've updated the button with{' '}
-              <span className="text-[#1e61f0] font-mono text-xs">w-full</span> for mobile and a
-              standardized loading spinner.
-            </p>
-
-            <div className="rounded border border-slate-200 bg-slate-50 overflow-hidden">
-              <div className="flex items-center justify-between px-3 py-2 bg-white border-b border-slate-100">
-                <span className="text-[10px] font-mono text-slate-500">Button.tsx</span>
-                <CopyButton />
-              </div>
-              <div className="p-3 font-mono text-[10px] text-slate-600 overflow-x-auto">
-                <span className="text-purple-600">const</span> Button = ({'{'} isLoading, ...props{'}'}) ={'>'} (
-                <br />
-                &nbsp;&nbsp;&lt;<span className="text-emerald-600">button</span> className="
-                <span className="text-amber-600">w-full md:w-auto...</span>
-                "&gt;
-                <br />
-                &nbsp;&nbsp;&nbsp;&nbsp;{'{'}isLoading ? &lt;Spinner /&gt; : children{'}'}
-                <br />
-                &nbsp;&nbsp;&lt;/<span className="text-emerald-600">button</span>&gt;
-                <br />)
-              </div>
-            </div>
-          </div>
+        <div className="flex flex-col gap-3">
+          {selectedIssue ? (
+            <>
+              {messages.length === 0 && (
+                <div>
+                  {/* Ask about the selected issue or the UI changes. */}
+                </div>
+              )}
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div className="space-y-2 max-w-[90%]">
+                    <div
+                      className={`rounded-2xl px-3 py-2 text-sm ${
+                        message.role === 'user'
+                          ? 'bg-slate-900 text-white rounded-tr-sm'
+                          : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm'
+                      }`}
+                    >
+                      {message.content}
+                    </div>
+                    {message.role === 'assistant' && message.evidence && message.evidence.length > 0 && (
+                      <div className="grid gap-2">
+                        {message.evidence.map((item, index) => (
+                          <div key={`${message.id}-${index}`}>{renderEvidence(item)}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {isSending && (
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <Loader2 size={12} className="animate-spin" />
+                  AMP is drafting a response...
+                </div>
+              )}
+              {chatError && <div className="text-xs text-rose-500">{chatError}</div>}
+              <div ref={messagesEndRef} />
+            </>
+          ) : (
+            <div className="text-xs text-slate-400">Select an issue to start chatting.</div>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -371,9 +531,21 @@ export function ChatPanel({
             <textarea
               rows={1}
               className="w-full resize-none bg-transparent px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none min-h-[44px]"
-              placeholder="Ask about styles, logic, or accessibility..."
+              placeholder={
+                selectedIssue
+                  ? 'Ask about the issue or UI changes...'
+                  : 'Select an issue to start chatting...'
+              }
+              value={inputValue}
               onFocus={() => setIsTyping(true)}
               onBlur={() => setIsTyping(false)}
+              onChange={(event) => setInputValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void handleSend();
+                }
+              }}
             />
           </div>
 
@@ -429,7 +601,14 @@ export function ChatPanel({
 
               {/* Prominent Send Button */}
               <button
-                className="p-1.5 rounded bg-slate-900 text-white hover:bg-slate-700 transition-colors"
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={!canSend}
+                className={`p-1.5 rounded transition-colors ${
+                  canSend
+                    ? 'bg-slate-900 text-white hover:bg-slate-700'
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                }`}
                 title="Send message"
               >
                 <ArrowUp size={16} strokeWidth={2.5} />

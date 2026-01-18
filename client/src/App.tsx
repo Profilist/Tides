@@ -7,7 +7,15 @@ import { RightSidebar } from './components/RightSidebar/RightSidebar';
 import { Canvas } from './components/Canvas/Canvas';
 import { useEditor } from './hooks/useEditor';
 import { useResponsiveSidebars } from './hooks/useResponsiveSidebars';
-import type { SelectedShape, ChatContextShape, PersonaImpact, Issue, IssuePage } from './types';
+import type {
+  SelectedShape,
+  ChatContextShape,
+  PersonaImpact,
+  Issue,
+  IssuePage,
+  ChatMessage,
+  SuggestionSummaryResponse,
+} from './types';
 import { HTML_PREVIEW_TYPE } from './shapes/HtmlPreviewShapeUtil';
 
 const USE_LOCAL_SUGGESTION = true;
@@ -24,6 +32,11 @@ export default function DesignPlatformUI() {
   const [chatContextShapes, setChatContextShapes] = useState<ChatContextShape[]>([]);
   const [isGeneratingSuggestion, setIsGeneratingSuggestion] = useState(false);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const [suggestionContext, setSuggestionContext] = useState<{
+    html?: string;
+    summary?: string | null;
+  } | null>(null);
+  const [suggestionMessage, setSuggestionMessage] = useState<ChatMessage | null>(null);
   const [personaImpactJobId, setPersonaImpactJobId] = useState<string | null>(null);
   const [personaImpacts, setPersonaImpacts] = useState<PersonaImpact[]>([]);
   const [personaImpactStatus, setPersonaImpactStatus] = useState<
@@ -138,9 +151,13 @@ export default function DesignPlatformUI() {
     setPersonaImpactError(null);
     setPersonaImpactStatus('idle');
     setPersonaImpactJobId(null);
+    setSuggestionMessage(null);
 
     try {
       if (USE_LOCAL_SUGGESTION) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 8000);
+        });
         const response = await fetch('/api/test/suggestion-output');
         if (!response.ok) {
           const details = await response.text();
@@ -150,6 +167,33 @@ export default function DesignPlatformUI() {
         const html = data?.html;
         if (typeof html === 'string' && html.trim()) {
           insertHtmlPreview(editorRef.current, html);
+          setSuggestionContext({ html });
+          if (selectedIssueId) {
+            const summaryResponse = await fetch(`/api/issues/${selectedIssueId}/suggestion-summary`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                suggestionHtml: html,
+              }),
+            });
+            if (summaryResponse.ok) {
+              const summaryData = (await summaryResponse.json()) as SuggestionSummaryResponse;
+              const content =
+                typeof summaryData?.message?.content === 'string'
+                  ? summaryData.message.content
+                  : '';
+              if (content) {
+                setSuggestionMessage({
+                  id: `suggestion-${Date.now()}`,
+                  role: 'assistant',
+                  content,
+                  timestamp: new Date().toISOString(),
+                  evidence: summaryData.message.evidence ?? [],
+                });
+                setSuggestionContext({ html, summary: content });
+              }
+            }
+          }
           const jobResponse = await fetch('/api/test/persona-impact-job', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -208,6 +252,39 @@ export default function DesignPlatformUI() {
       const jobId = typeof data?.personaImpactJobId === 'string' ? data.personaImpactJobId : null;
       if (typeof html === 'string' && html.trim()) {
         insertHtmlPreview(editorRef.current, html);
+        const changeSummary = Array.isArray(data?.suggestion?.changeSummary)
+          ? data.suggestion.changeSummary.join(' ')
+          : null;
+        setSuggestionContext({ html, summary: changeSummary });
+        if (selectedIssueId) {
+          const summaryResponse = await fetch(`/api/issues/${selectedIssueId}/suggestion-summary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              suggestionHtml: html,
+              changeSummary: Array.isArray(data?.suggestion?.changeSummary)
+                ? data.suggestion.changeSummary
+                : [],
+            }),
+          });
+          if (summaryResponse.ok) {
+            const summaryData = (await summaryResponse.json()) as SuggestionSummaryResponse;
+            const content =
+              typeof summaryData?.message?.content === 'string'
+                ? summaryData.message.content
+                : '';
+            if (content) {
+              setSuggestionMessage({
+                id: `suggestion-${Date.now()}`,
+                role: 'assistant',
+                content,
+                timestamp: new Date().toISOString(),
+                evidence: summaryData.message.evidence ?? [],
+              });
+              setSuggestionContext({ html, summary: content });
+            }
+          }
+        }
         if (jobId) {
           setPersonaImpactJobId(jobId);
           setPersonaImpactStatus('pending');
@@ -324,6 +401,11 @@ export default function DesignPlatformUI() {
   }, [issues, selectedIssueId]);
 
   useEffect(() => {
+    setSuggestionContext(null);
+    setSuggestionMessage(null);
+  }, [selectedIssueId]);
+
+  useEffect(() => {
     if (!editor) {
       return;
     }
@@ -422,6 +504,8 @@ export default function DesignPlatformUI() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           selectedIssue={issues.find((issue) => issue.id === selectedIssueId) ?? null}
+          suggestionContext={suggestionContext}
+          suggestionMessage={suggestionMessage}
           issuesError={issuesError}
           selectedShapes={selectedShapes}
           chatContextShapes={chatContextShapes}
