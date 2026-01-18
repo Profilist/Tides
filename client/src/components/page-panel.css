@@ -1,0 +1,88 @@
+/* Page panel styles for sidebar integration */
+
+.page-panel-drop-zone {
+	height: 2px;
+	margin: 2px 0;
+	background: transparent;
+	transition: background 0.1s;
+	border-radius: 2px;
+}
+
+.page-panel-drop-zone.active {
+	background: #3b82f6;
+	height: 3px;
+}
+
+.page-panel-item.dragging {
+	opacity: 0.5;
+}
+
+.page-panel-item-content.drag-over-inside {
+	background: #dbeafe;
+	border: 1px dashed #3b82f6;
+}
+
+.page-panel-item {
+	user-select: none;
+}
+
+.page-panel-item-content {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 12px;
+	cursor: pointer;
+	font-size: 13px;
+	color: #374151;
+	transition: background-color 0.1s;
+}
+
+.page-panel-item-content:hover {
+	background: #f3f4f6;
+}
+
+.page-panel-item-content.selected {
+	background: #dbeafe;
+	color: #1e40af;
+}
+
+.page-panel-item-content.hidden {
+	opacity: 0.5;
+}
+
+.page-panel-item-expander {
+	width: 16px;
+	font-size: 10px;
+	color: #6b7280;
+	transition: transform 0.2s;
+}
+
+.page-panel-item-content.expanded .page-panel-item-expander {
+	transform: rotate(90deg);
+}
+
+.page-panel-item-spacer {
+	width: 16px;
+}
+
+.page-panel-item-label {
+	flex: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.page-panel-item-toggle {
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 2px 4px;
+	font-size: 14px;
+	opacity: 0.6;
+	transition: opacity 0.1s;
+}
+
+.page-panel-item-toggle:hover {
+	opacity: 1;
+}
+
