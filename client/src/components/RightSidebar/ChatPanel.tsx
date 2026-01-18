@@ -1,9 +1,18 @@
-import React, { useState } from 'react';
-import { Sparkles, Terminal, CheckCircle2, Code2, Maximize2, ArrowUp, Video, Gauge, User } from 'lucide-react';
-import type { SelectedShape, ChatContextShape } from '../../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Sparkles,
+  Code2,
+  Maximize2,
+  ArrowUp,
+  Video,
+  Gauge,
+  User,
+  Loader2,
+  Check,
+} from 'lucide-react';
+import type { SelectedShape, ChatContextShape, PersonaImpact } from '../../types';
 import { getShapeIcon } from '../../utils/shapeUtils';
 import { ContextPill } from '../../../src/components/common/ContextPill';
-import { ActionSuggestion } from '../../../src/components/common/ActionSuggestion';
 import { IconButton } from '../../../src/components/common/IconButton';
 import { CopyButton } from '../../../src/components/common/CopyButton';
 
@@ -18,6 +27,9 @@ interface ChatPanelProps {
   onGenerateSuggestion: () => void;
   isGeneratingSuggestion: boolean;
   suggestionError: string | null;
+  personaImpacts: PersonaImpact[];
+  personaImpactStatus: 'idle' | 'pending' | 'running' | 'done' | 'error';
+  personaImpactError: string | null;
 }
 
 export function ChatPanel({
@@ -29,8 +41,127 @@ export function ChatPanel({
   onGenerateSuggestion,
   isGeneratingSuggestion,
   suggestionError,
+  personaImpacts,
+  personaImpactStatus,
+  personaImpactError,
 }: ChatPanelProps) {
   const [contextMode, setContextMode] = useState<ContextMode>(null);
+  const [progress, setProgress] = useState<number[]>([0, 0, 0, 0]);
+  const [activePersonaIndex, setActivePersonaIndex] = useState<number | null>(null);
+  const [animationActive, setAnimationActive] = useState(false);
+  const prevGeneratingRef = useRef(isGeneratingSuggestion);
+  const [phraseIndices, setPhraseIndices] = useState<number[]>([0, 0, 0, 0]);
+
+  const personaAgents = useMemo(() => Array.from({ length: 4 }, (_, index) => index), []);
+  const phrases = useMemo(
+    () => [
+      'Shopping for sneakers...',
+      'Comparing cart totals...',
+      'Browsing new arrivals...',
+      'Checking size availability...',
+      'Reviewing return policy...',
+      'Applying a promo code...',
+      'Switching to mobile view...',
+      'Saving items for later...',
+      'Scanning product details...',
+      'Exploring color options...',
+      'Looking for free shipping...',
+      'Finishing checkout flow...',
+      'Looking for gift ideas...',
+      'Sorting by best sellers...',
+      'Filtering by price range...',
+      'Rechecking product reviews...',
+      'Comparing material details...',
+      'Picking a favorite colorway...',
+      'Checking stock in store...',
+      'Skimming delivery timelines...',
+      'Reviewing payment options...',
+      'Editing the shopping bag...',
+      'Verifying size guide...',
+      'Hunting for limited drops...',
+      'Confirming order total...',
+      'Scanning for bundle deals...',
+      'Comparing fit notes...',
+      'Saving for a future sale...',
+      'Testing a wishlist flow...',
+      'Browsing editorial picks...',
+      'Searching for seasonal items...',
+      'Reviewing shipping address...',
+      'Confirming tax estimate...',
+      'Checking loyalty points...',
+      'Exploring recommended items...',
+      'Reviewing product images...',
+      'Zooming into details...',
+      'Comparing similar styles...',
+      'Checking availability by size...',
+      'Reviewing care instructions...',
+      'Completing account sign-up...',
+      'Comparing shipping speeds...',
+      'Validating discount eligibility...',
+      'Inspecting cart line items...',
+      'Evaluating fit for occasion...',
+      'Testing add-to-cart flow...',
+      'Reviewing exchange policy...',
+      'Scanning for cross-sells...',
+      'Comparing color swatches...',
+      'Revisiting saved items...',
+      'Reviewing order summary...',
+      'Finalizing payment method...',
+    ],
+    [],
+  );
+
+  useEffect(() => {
+    const wasGenerating = prevGeneratingRef.current;
+    if (!wasGenerating && isGeneratingSuggestion) {
+      setProgress([0, 0, 0, 0]);
+      setPhraseIndices([0, 0, 0, 0]);
+      setAnimationActive(true);
+    }
+    prevGeneratingRef.current = isGeneratingSuggestion;
+  }, [isGeneratingSuggestion]);
+
+  useEffect(() => {
+    if (!animationActive) {
+      return;
+    }
+    const startTime = Date.now();
+    const durations = [5000, 5600, 6200, 6800];
+    const offsets = [0, 600, 1200, 1800];
+    let timer: number | null = window.setInterval(() => {
+      const now = Date.now();
+      setProgress((prev) => {
+        const next = prev.map((value, index) => {
+          const elapsed = now - startTime - offsets[index];
+          if (elapsed <= 0) {
+            return value;
+          }
+          const ratio = Math.min(1, elapsed / durations[index]);
+          return Math.max(value, Math.round(ratio * 100));
+        });
+        const allDone = next.every((value) => value >= 100);
+        if (allDone && timer) {
+          window.clearInterval(timer);
+          timer = null;
+          setAnimationActive(false);
+        }
+        return next;
+      });
+    }, 200);
+    let phraseTimer: number | null = window.setInterval(() => {
+      setPhraseIndices((prev) =>
+        prev.map((value, index) => (value + 1 + index) % phrases.length),
+      );
+    }, 1200);
+    return () => {
+      if (timer) {
+        window.clearInterval(timer);
+      }
+      if (phraseTimer) {
+        window.clearInterval(phraseTimer);
+      }
+    };
+  }, [animationActive, phrases.length]);
 
   return (
     <>
@@ -65,24 +196,27 @@ export function ChatPanel({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-2">
-          <ActionSuggestion
-            label={isGeneratingSuggestion ? 'Generating UI preview...' : 'Generate UI Preview'}
-            icon={<Sparkles size={12} />}
-            onClick={onGenerateSuggestion}
-            disabled={isGeneratingSuggestion}
-          />
-          <ActionSuggestion label="Generate Tailwind Props" icon={<Terminal size={12} />} />
-          <ActionSuggestion label="Audit Accessibility (A11y)" icon={<CheckCircle2 size={12} />} />
-        </div>
         {suggestionError && (
           <div className="text-xs text-red-500">{suggestionError}</div>
         )}
 
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-col items-end gap-2">
           <div className="bg-slate-100 text-slate-800 text-sm px-3 py-2 rounded-2xl rounded-tr-sm max-w-[90%]">
-            Make this button responsive and add a loading state.
+            Would you like to see suggested changes?
           </div>
+          <button
+            type="button"
+            onClick={onGenerateSuggestion}
+            disabled={isGeneratingSuggestion}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              isGeneratingSuggestion
+                ? 'border-slate-200 text-slate-400 bg-slate-100 cursor-not-allowed'
+                : 'border-[#1e61f0]/30 text-[#1e61f0] bg-[#1e61f0]/5 hover:bg-[#1e61f0]/10'
+            }`}
+          >
+            <Sparkles size={12} />
+            {isGeneratingSuggestion ? 'Generating UI preview...' : 'Generate UI Preview'}
+          </button>
         </div>
 
         <div className="flex flex-col gap-2">
@@ -116,6 +250,100 @@ export function ChatPanel({
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="w-full max-w-[280px] rounded-lg border border-slate-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+            {personaAgents.map((index) => {
+              const percent = progress[index] ?? 0;
+              const isDone = percent >= 100;
+              const isRunning = animationActive && !isDone;
+              const phrase = phrases[phraseIndices[index] ?? 0] ?? phrases[0];
+              const rowClasses = isRunning
+                ? 'relative bg-[#C1E0FE]/10 px-3 py-2.5'
+                : 'px-3 py-2.5 border-b border-slate-50';
+
+              return (
+                <button
+                  key={`persona-agent-${index + 1}`}
+                  type="button"
+                  onClick={() => setActivePersonaIndex(index)}
+                  className={`w-full text-left ${rowClasses}`}
+                >
+                  {isRunning ? (
+                    <>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="text-[#1E61F0]">
+                            <User size={14} />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-semibold text-[#0D1F91]">
+                              Persona Agent {index + 1}
+                            </span>
+                          </div>
+                        </div>
+                        <Loader2 size={12} className="text-[#1E61F0] animate-spin" />
+                      </div>
+                      <div className="flex justify-between items-center pl-[26px]">
+                        <span className="text-[10px] text-slate-500 font-medium truncate max-w-[140px]">
+                          {phrase}
+                        </span>
+                        <span className="text-[10px] font-mono text-[#1E61F0] opacity-80">
+                          {percent}%
+                        </span>
+                      </div>
+                      <div className="absolute bottom-0 left-0 w-full h-[2px] bg-[#C1E0FE]/50">
+                        <div
+                          className="h-full bg-[#1E61F0] transition-all duration-700 ease-out"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex items-center justify-center text-[#0F4F73]">
+                          <User size={14} className="opacity-80" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-medium text-slate-600">
+                            Persona Agent {index + 1}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-400">
+                          {isDone ? 'Done' : ''}
+                        </span>
+                        {isDone ? (
+                          <Check size={12} className="text-[#0F4F73]" strokeWidth={2.5} />
+                        ) : (
+                          <span className="text-[10px] font-mono text-[#1E61F0] opacity-80">
+                            {percent}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {personaImpactStatus === 'idle' && (
+            <div className="text-xs text-slate-400">Run a suggestion to see persona impacts.</div>
+          )}
+          {(personaImpactStatus === 'pending' || personaImpactStatus === 'running') && (
+            <div className="text-xs text-slate-400">Loading persona impacts...</div>
+          )}
+          {personaImpactStatus === 'error' && (
+            <div className="text-xs text-rose-500">
+              Failed to load persona impacts{personaImpactError ? `: ${personaImpactError}` : '.'}
+            </div>
+          )}
+          {personaImpactStatus === 'done' && personaImpacts.length === 0 && (
+            <div className="text-xs text-slate-400">No persona impacts returned.</div>
+          )}
         </div>
       </div>
 
@@ -213,6 +441,72 @@ export function ChatPanel({
           AI can make mistakes. Verify generated code.
         </div>
       </div>
+      {activePersonaIndex !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          {(() => {
+            const persona = personaImpacts[activePersonaIndex] ?? null;
+            return (
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+            <div className="flex items-start justify-between px-4 py-3 border-b border-slate-100">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">
+                  {persona?.personaName ?? `Persona Agent ${activePersonaIndex + 1}`}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {persona ? 'Persona details' : 'Persona details not available yet'}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="text-slate-400 hover:text-slate-600"
+                onClick={() => setActivePersonaIndex(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="px-4 py-4 space-y-4 text-sm text-slate-600">
+              {persona ? (
+                <>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-400">Summary</div>
+                    <div className="mt-1">{persona.summary}</div>
+                  </div>
+                  {persona.signals.length > 0 && (
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-slate-400">Signals</div>
+                      <ul className="mt-1 list-disc list-inside text-slate-500 space-y-1">
+                        {persona.signals.map((signal) => (
+                          <li key={signal}>{signal}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-slate-500">
+                  Run “Generate UI Preview” to populate persona insights.
+                </div>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-slate-100 text-right">
+              <button
+                type="button"
+                className="text-xs font-medium text-slate-600 hover:text-slate-900"
+                onClick={() => setActivePersonaIndex(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+            );
+          })()}
+        </div>
+      )}
     </>
   );
 }

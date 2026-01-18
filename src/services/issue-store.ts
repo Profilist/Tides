@@ -44,6 +44,105 @@ const toIssueRow = (issue: Issue) => ({
   payload_json: issue,
 });
 
+type IssueRow = {
+  payload_json?: Issue | null;
+  id?: string | null;
+  metric?: Issue["metric"] | null;
+  event_type?: string | null;
+  direction?: Issue["direction"] | null;
+  severity?: Issue["severity"] | null;
+  delta_pct?: number | null;
+  value_a?: number | null;
+  value_b?: number | null;
+  segment_json?: Issue["segment"] | null;
+  window_a_json?: Issue["windowA"] | null;
+  window_b_json?: Issue["windowB"] | null;
+  sample_a_json?: Issue["sampleA"] | null;
+  sample_b_json?: Issue["sampleB"] | null;
+  summary?: string | null;
+  category?: string | null;
+  page_names_json?: string[] | null;
+  evidence_json?: Issue["evidence"] | null;
+  samples_json?: Issue["samples"] | null;
+};
+
+const toIssue = (row: IssueRow): Issue | null => {
+  if (row.payload_json) {
+    return row.payload_json;
+  }
+  if (!row.id || !row.metric || !row.event_type || !row.window_a_json || !row.window_b_json) {
+    return null;
+  }
+  return {
+    id: row.id,
+    metric: row.metric,
+    eventType: row.event_type,
+    direction: row.direction ?? "flat",
+    severity: row.severity ?? "low",
+    deltaPct: row.delta_pct ?? 0,
+    valueA: row.value_a ?? 0,
+    valueB: row.value_b ?? 0,
+    segment: row.segment_json ?? {},
+    windowA: row.window_a_json,
+    windowB: row.window_b_json,
+    sampleA: row.sample_a_json ?? { eventCount: 0, uniqueUsers: 0 },
+    sampleB: row.sample_b_json ?? { eventCount: 0, uniqueUsers: 0 },
+    summary: row.summary ?? undefined,
+    category: row.category ?? undefined,
+    pageNames: row.page_names_json ?? undefined,
+    evidence: row.evidence_json ?? undefined,
+    samples: row.samples_json ?? undefined,
+  };
+};
+
+export const fetchIssueById = async (issueId: string): Promise<Issue | null> => {
+  const trimmedId = issueId.trim();
+  if (!trimmedId) {
+    return null;
+  }
+
+  const client = getSupabaseClient();
+  const table = process.env.ISSUES_TABLE?.trim() || DEFAULT_TABLE;
+
+  const { data, error } = await client
+    .from(table)
+    .select(
+      [
+        "payload_json",
+        "id",
+        "metric",
+        "event_type",
+        "direction",
+        "severity",
+        "delta_pct",
+        "value_a",
+        "value_b",
+        "segment_json",
+        "window_a_json",
+        "window_b_json",
+        "sample_a_json",
+        "sample_b_json",
+        "summary",
+        "category",
+        "page_names_json",
+        "evidence_json",
+        "samples_json",
+      ].join(","),
+    )
+    .eq("id", trimmedId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return toIssue(data as IssueRow);
+};
+
 export const saveIssues = async (
   issues: Issue[],
 ): Promise<{ savedIssues: number }> => {
@@ -68,4 +167,53 @@ export const saveIssues = async (
   }
 
   return { savedIssues: issues.length };
+};
+
+export const fetchRecentIssues = async (
+  minutes = 5,
+  limit = 50,
+): Promise<Issue[]> => {
+  const client = getSupabaseClient();
+  const table = process.env.ISSUES_TABLE?.trim() || DEFAULT_TABLE;
+  const clampedMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
+  const clampedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+  const cutoff = new Date(Date.now() - clampedMinutes * 60 * 1000).toISOString();
+
+  const { data, error } = await client
+    .from(table)
+    .select(
+      [
+        "payload_json",
+        "id",
+        "metric",
+        "event_type",
+        "direction",
+        "severity",
+        "delta_pct",
+        "value_a",
+        "value_b",
+        "segment_json",
+        "window_a_json",
+        "window_b_json",
+        "sample_a_json",
+        "sample_b_json",
+        "summary",
+        "category",
+        "page_names_json",
+        "evidence_json",
+        "samples_json",
+        "derived_at",
+      ].join(","),
+    )
+    .gte("derived_at", cutoff)
+    .order("derived_at", { ascending: false })
+    .limit(clampedLimit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? [])
+    .map((row) => toIssue(row as IssueRow))
+    .filter((issue): issue is Issue => issue !== null);
 };

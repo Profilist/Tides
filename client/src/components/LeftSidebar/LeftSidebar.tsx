@@ -2,35 +2,33 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   X,
   Plus,
-  CheckCircle2,
   Circle,
   Layout
 } from 'lucide-react';
-import type { Editor, TLShapeId } from 'tldraw';
+import type { Editor, TLShape, TLShapeId } from 'tldraw';
 import { PagesListWithDragDrop } from './PagesListWithDragDrop';
 import '../page-panel.css';
+import type { Issue } from '../../types';
 
 interface LeftSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   editor: Editor | null;
-}
-
-// Mock Task Data
-interface Task {
-  id: string;
-  name: string;
-  isCompleted: boolean;
+  issues: Issue[];
+  selectedIssueId: string | null;
+  onSelectIssue: (issueId: string | null) => void;
 }
 
 export function LeftSidebar({
   isOpen,
   onClose,
   editor,
+  issues,
+  selectedIssueId,
+  onSelectIssue,
 }: LeftSidebarProps) {
   // --- State ---
   // Default to null (All Pages) or a specific ID
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isTasksCollapsed, setIsTasksCollapsed] = useState(false);
   const [allShapeIds, setAllShapeIds] = useState<TLShapeId[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; shapeIds: TLShapeId[] } | null>(null);
@@ -39,12 +37,15 @@ export function LeftSidebar({
   const pendingUpdateRef = useRef(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
-  // Mock Tasks - In a real app, these would come from your backend/store
-  const tasks: Task[] = useMemo(() => [
-    { id: 't1', name: 'Design System', isCompleted: false },
-    { id: 't2', name: 'Auth Flow', isCompleted: true },
-    { id: 't3', name: 'Dashboard', isCompleted: false },
-  ], []);
+  const taskItems = useMemo(
+    () =>
+      issues.map((issue) => ({
+        id: issue.id,
+        name: issue.category ?? 'Uncategorized',
+        pageCount: issue.pageNames?.length ?? 0,
+      })),
+    [issues],
+  );
 
   // --- Tldraw Data Sync ---
   const updateShapeIds = useCallback(() => {
@@ -101,18 +102,18 @@ export function LeftSidebar({
 
   // --- Filtering Logic (Simulated) ---
   const displayedShapeIds = useMemo(() => {
-    if (!activeTaskId || !editor) return allShapeIds;
+    if (!selectedIssueId || !editor) return allShapeIds;
 
     // SIMULATED FILTER: 
     // Example: 't1' shows first 3 layers, 't2' shows next 3, etc.
-    // Replace with real logic: allShapeIds.filter(id => editor.getShape(id).meta.taskId === activeTaskId)
+    // Replace with real logic: allShapeIds.filter(id => editor.getShape(id).meta.taskId === selectedIssueId)
     return allShapeIds.filter((_, index) => {
-      if (activeTaskId === 't1') return index < 3;
-      if (activeTaskId === 't2') return index >= 3 && index < 6;
-      if (activeTaskId === 't3') return index >= 6;
+      if (selectedIssueId === issues[0]?.id) return index < 3;
+      if (selectedIssueId === issues[1]?.id) return index >= 3 && index < 6;
+      if (selectedIssueId === issues[2]?.id) return index >= 6;
       return true;
     });
-  }, [allShapeIds, activeTaskId, editor]);
+  }, [allShapeIds, editor, issues, selectedIssueId]);
 
   // --- Context Menu (Grouping) ---
   useEffect(() => {
@@ -138,28 +139,31 @@ export function LeftSidebar({
 
   const handleGroup = () => {
     if (!editor || !contextMenu) return;
-    const shapes = contextMenu.shapeIds.map(id => editor.getShape(id)).filter(Boolean);
+    const shapes = contextMenu.shapeIds
+      .map((id) => editor.getShape(id))
+      .filter((shape): shape is TLShape => Boolean(shape));
     if (shapes.length >= 2) editor.groupShapes(shapes);
     setContextMenu(null);
   };
 
   const handleUngroup = () => {
     if (!editor || !contextMenu) return;
-    const shapes = contextMenu.shapeIds.map(id => editor.getShape(id)).filter(Boolean);
-    const groups = shapes.filter(s => s.type === 'group');
+    const shapes = contextMenu.shapeIds
+      .map((id) => editor.getShape(id))
+      .filter((shape): shape is TLShape => Boolean(shape));
+    const groups = shapes.filter((shape) => shape.type === 'group');
     if (groups.length > 0) editor.ungroupShapes(groups);
     setContextMenu(null);
   };
 
   // --- Helper for Task Count ---
-  const getTaskLayerCount = (tid: string | null) => {
-     if (!tid) return allShapeIds.length;
-     // Mimic the filter logic above for counts
-     if (tid === 't1') return Math.min(allShapeIds.length, 3);
-     if (tid === 't2') return Math.max(0, Math.min(allShapeIds.length, 6) - 3);
-     if (tid === 't3') return Math.max(0, allShapeIds.length - 6);
-     return 0;
-  }
+  const getTaskLayerCount = (issueId: string | null) => {
+    if (!issueId) return allShapeIds.length;
+    if (issueId === issues[0]?.id) return Math.min(allShapeIds.length, 3);
+    if (issueId === issues[1]?.id) return Math.max(0, Math.min(allShapeIds.length, 6) - 3);
+    if (issueId === issues[2]?.id) return Math.max(0, allShapeIds.length - 6);
+    return 0;
+  };
 
   // --- Render ---
 
@@ -194,10 +198,10 @@ export function LeftSidebar({
         <div className={`px-2 flex flex-col gap-0.5 transition-all duration-300 ${isTasksCollapsed ? 'hidden' : 'block'}`}>
           {/* "View All" - Acting as the Default View */}
           <div
-            onClick={() => setActiveTaskId(null)}
+            onClick={() => onSelectIssue(null)}
             className={`
               flex items-center justify-between px-3 py-1.5 rounded-md cursor-pointer text-[12px] font-medium
-              ${activeTaskId === null
+              ${selectedIssueId === null
                 ? 'bg-[#1e61f0] text-white' // Selected: task being worked on
                 : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
               }
@@ -208,13 +212,13 @@ export function LeftSidebar({
           </div>
 
           {/* Individual Tasks */}
-          {tasks.map(task => {
-            const isActive = activeTaskId === task.id;
+          {taskItems.map((task) => {
+            const isActive = selectedIssueId === task.id;
             const count = getTaskLayerCount(task.id);
             return (
               <div 
                 key={task.id}
-                onClick={() => setActiveTaskId(task.id)}
+                onClick={() => onSelectIssue(task.id)}
                 className={`
                   group flex items-center justify-between px-3 py-1.5 rounded-md cursor-pointer text-[12px] font-medium transition-colors
                   ${isActive 
@@ -224,18 +228,13 @@ export function LeftSidebar({
                 `}
               >
                 <div className="flex items-center gap-2 truncate">
-                  {/* Status Indicator */}
-                  {task.isCompleted ? (
-                    <CheckCircle2 size={12} className="text-slate-400" />
-                  ) : (
-                    <Circle size={12} className="text-slate-300" />
-                  )}
+                  <Circle size={12} className="text-slate-300" />
                   <span className="truncate">{task.name}</span>
                 </div>
                 
                 {/* Count Pill */}
                 <span className={`text-[10px] opacity-60 font-semibold`}>
-                  {count}
+                  {task.pageCount ?? count}
                 </span>
               </div>
             );
@@ -269,7 +268,7 @@ export function LeftSidebar({
               shapeIds={displayedShapeIds}
               depth={0}
               editor={editor}
-              parentId={editor.getCurrentPageId()}
+              parentId={editor.getCurrentPageId() as unknown as TLShapeId}
               onContextMenu={handleContextMenu}
             />
           )}

@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { createPatch } from "diff";
 import { deriveIssues } from "../services/issue-detector";
+import { fetchIssueById, fetchRecentIssues } from "../services/issue-store";
+import { fetchPagesWithScreenshots } from "../services/page-store";
 import {
   analyzeIssuesWithGemini,
   analyzePersonaImpactsWithGemini,
@@ -29,6 +31,8 @@ const MAX_ISSUES = 10;
 const MAX_SCREENSHOTS = 5;
 const MAX_HTML_CHARS = 250000;
 const MAX_DIFF_CHARS = 20000;
+const DEFAULT_RECENT_MINUTES = 10000;
+const DEFAULT_RECENT_LIMIT = 50;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -45,6 +49,17 @@ const normalizeIssues = (value: unknown) => {
     return null;
   }
   return value.filter(isRecord) as Issue[];
+};
+
+const parseNumberParam = (value: unknown) => {
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return null;
 };
 
 const normalizeScreenshots = (value: unknown) => {
@@ -108,6 +123,61 @@ const buildHtmlDiff = (originalHtml: string, updatedHtml: string) => {
 };
 
 export const registerIssueRoutes = (app: Express) => {
+  app.get("/api/issues/:id/pages", async (req, res) => {
+    const issueId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!issueId) {
+      res.status(400).json({ error: "Missing issue id." });
+      return;
+    }
+
+    try {
+      const issue = await fetchIssueById(issueId);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found." });
+        return;
+      }
+
+      const pageNames = issue.pageNames ?? [];
+      const pages = await fetchPagesWithScreenshots(pageNames);
+
+      res.status(200).json({
+        pages,
+        meta: {
+          issueId,
+          pageCount: pages.length,
+          requestedPages: pageNames,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to fetch issue pages.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/issues", async (req, res) => {
+    const minutes = parseNumberParam(req.query.minutes) ?? DEFAULT_RECENT_MINUTES;
+    const limit = parseNumberParam(req.query.limit) ?? DEFAULT_RECENT_LIMIT;
+
+    try {
+      const issues = await fetchRecentIssues(minutes, limit);
+      res.status(200).json({
+        issues,
+        meta: {
+          minutes,
+          limit,
+          returned: issues.length,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to fetch recent issues.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   app.post("/api/derive-issues", (req, res) => {
     const events = normalizeEvents(req.body?.events);
     if (!events) {

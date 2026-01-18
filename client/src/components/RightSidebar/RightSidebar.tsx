@@ -1,15 +1,17 @@
 import { X, Sparkles } from 'lucide-react';
-import { InspectPanel } from './InspectPanel';
+import { DetailsPanel } from './DetailsPanel';
 import { ChatPanel } from './ChatPanel';
-import type { SelectedShape, ChatContextShape, PersonaImpact } from '../../types';
+import type { SelectedShape, ChatContextShape, Issue, PersonaImpact } from '../../types/index';
 
-type TabType = 'inspect' | 'chat';
+type TabType = 'details' | 'chat';
 
 interface RightSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
+  selectedIssue: Issue | null;
+  issuesError: string | null;
   selectedShapes: SelectedShape[];
   chatContextShapes: ChatContextShape[];
   isTyping: boolean;
@@ -28,6 +30,8 @@ export function RightSidebar({
   onClose,
   activeTab,
   onTabChange,
+  selectedIssue,
+  issuesError,
   selectedShapes,
   chatContextShapes,
   isTyping,
@@ -57,16 +61,16 @@ export function RightSidebar({
       <div className="flex items-center justify-between gap-1 px-3 py-2.5 border-b border-slate-100 bg-slate-50/50">
         <div className="flex items-center gap-1 flex-1">
           <button
-            onClick={() => onTabChange('inspect')}
+            onClick={() => onTabChange('details')}
             className={`
               flex-1 relative px-3 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200
-              ${activeTab === 'inspect'
+              ${activeTab === 'details'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
               }
             `}
           >
-            Inspect
+            Details
           </button>
           <button
             onClick={() => onTabChange('chat')}
@@ -91,13 +95,8 @@ export function RightSidebar({
       </div>
 
       <div className="flex-1 overflow-hidden relative flex flex-col">
-        {activeTab === 'design' && <DesignPanel />}
-        {activeTab === 'inspect' && (
-          <InspectPanel
-            personaImpacts={personaImpacts}
-            personaImpactStatus={personaImpactStatus}
-            personaImpactError={personaImpactError}
-          />
+        {activeTab === 'details' && (
+          <DetailsPanel issue={selectedIssue} issuesError={issuesError} />
         )}
         {activeTab === 'chat' && (
           <ChatPanel
@@ -109,6 +108,9 @@ export function RightSidebar({
             onGenerateSuggestion={onGenerateSuggestion}
             isGeneratingSuggestion={isGeneratingSuggestion}
             suggestionError={suggestionError}
+            personaImpacts={personaImpacts}
+            personaImpactStatus={personaImpactStatus}
+            personaImpactError={personaImpactError}
           />
         )}
       </div>

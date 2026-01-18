@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import type { Editor, TLShapeId } from 'tldraw';
+import { useEffect, useState } from 'react';
+import type { Editor } from 'tldraw';
 import { PanelLeft, PanelRight } from 'lucide-react';
 import { Header } from './components/Header/Header';
 import { LeftSidebar } from './components/LeftSidebar/LeftSidebar';
@@ -7,13 +7,18 @@ import { RightSidebar } from './components/RightSidebar/RightSidebar';
 import { Canvas } from './components/Canvas/Canvas';
 import { useEditor } from './hooks/useEditor';
 import { useResponsiveSidebars } from './hooks/useResponsiveSidebars';
-import type { LayerNode, SelectedShape, ChatContextShape, PersonaImpact } from './types';
+import type { SelectedShape, ChatContextShape, PersonaImpact, Issue, IssuePage } from './types';
 import { HTML_PREVIEW_TYPE } from './shapes/HtmlPreviewShapeUtil';
 
 const USE_LOCAL_SUGGESTION = true;
+const ISSUE_PAGE_SOURCE_PREFIX = 'issue-pages:';
+const DEFAULT_PREVIEW_WIDTH = 1200;
+const DEFAULT_PREVIEW_HEIGHT = 800;
+const PAGE_GAP = 80;
+const SHOT_GAP = 40;
 
 export default function DesignPlatformUI() {
-  const [activeTab, setActiveTab] = useState<'inspect' | 'chat'>('chat');
+  const [activeTab, setActiveTab] = useState<'details' | 'chat'>('chat');
   const [isTyping, setIsTyping] = useState(false);
   const [selectedShapes, setSelectedShapes] = useState<SelectedShape[]>([]);
   const [chatContextShapes, setChatContextShapes] = useState<ChatContextShape[]>([]);
@@ -25,6 +30,68 @@ export default function DesignPlatformUI() {
     'idle' | 'pending' | 'running' | 'done' | 'error'
   >('idle');
   const [personaImpactError, setPersonaImpactError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [issuesError, setIssuesError] = useState<string | null>(null);
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+
+  const clearIssuePagePreviews = (editor: Editor) => {
+    const shapes = editor.getCurrentPageShapes();
+    const toDelete = shapes.map((shape) => shape.id);
+    if (toDelete.length > 0) {
+      editor.deleteShapes(toDelete);
+    }
+  };
+
+  const getPreviewSize = (screenshot: IssuePage['screenshots'][number]) => {
+    const width = screenshot.width ?? DEFAULT_PREVIEW_WIDTH;
+    const height = screenshot.height ?? DEFAULT_PREVIEW_HEIGHT;
+    if (width <= DEFAULT_PREVIEW_WIDTH) {
+      return { width, height };
+    }
+    const scale = DEFAULT_PREVIEW_WIDTH / width;
+    return {
+      width: DEFAULT_PREVIEW_WIDTH,
+      height: Math.round(height * scale),
+    };
+  };
+
+  const renderIssuePages = (editor: Editor, issueId: string, pages: IssuePage[]) => {
+    clearIssuePagePreviews(editor);
+    let x = 120;
+
+    pages.forEach((page) => {
+      let y = 120;
+      let columnWidth = 0;
+
+      page.screenshots.forEach((screenshot) => {
+        const { width, height } = getPreviewSize(screenshot);
+        const title = [page.title ?? page.name, screenshot.label]
+          .filter(Boolean)
+          .join(' · ');
+        const html = `<!DOCTYPE html><html><body style="margin:0;background:#ffffff;">
+          <img src="${screenshot.url}" style="width:100%;height:100%;object-fit:contain;" />
+        </body></html>`;
+
+        editor.createShape({
+          type: HTML_PREVIEW_TYPE,
+          x,
+          y,
+          props: {
+            w: width,
+            h: height,
+            html,
+            title: title || page.name,
+            sourceShapeId: `${ISSUE_PAGE_SOURCE_PREFIX}${issueId}`,
+          },
+        });
+
+        y += height + SHOT_GAP;
+        columnWidth = Math.max(columnWidth, width);
+      });
+
+      x += columnWidth + PAGE_GAP;
+    });
+  };
 
   const {
     leftSidebarOpen,
@@ -37,33 +104,6 @@ export default function DesignPlatformUI() {
     setSelectedShapes,
     setChatContextShapes
   );
-
-  const handleLayerClick = (shapeId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!editorRef.current) return;
-
-    try {
-      editorRef.current.setSelectedShapes([shapeId as TLShapeId]);
-      setTimeout(() => {
-        editorRef.current?.zoomToSelection({ animation: { duration: 200 } });
-      }, 50);
-    } catch (error) {
-      console.error('Error selecting shape:', error);
-    }
-  };
-
-  const toggleLayerExpansion = (shapeId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setExpandedLayers((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(shapeId)) {
-        newSet.delete(shapeId);
-      } else {
-        newSet.add(shapeId);
-      }
-      return newSet;
-    });
-  };
 
   const handleClearSelection = () => {
     editorRef.current?.setSelectedShapes([]);
@@ -114,8 +154,8 @@ export default function DesignPlatformUI() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              projectId: 'demo',
-              project: { id: 'demo', name: 'Demo UI Suggestion' },
+              projectId: 'default',
+              project: { id: 'default', name: 'Demo UI Suggestion' },
             }),
           });
           if (jobResponse.ok) {
@@ -237,6 +277,88 @@ export default function DesignPlatformUI() {
     };
   }, [personaImpactJobId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let intervalId: number | null = null;
+
+    const loadIssues = async () => {
+      try {
+        const response = await fetch('/api/issues');
+        if (!response.ok) {
+          const details = await response.text();
+          throw new Error(`Request failed (${response.status}): ${details.slice(0, 200)}`);
+        }
+        const data = await response.json();
+        if (cancelled) return;
+        const nextIssues = Array.isArray(data?.issues) ? data.issues : [];
+        setIssues(nextIssues);
+        setIssuesError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setIssuesError(error instanceof Error ? error.message : 'Failed to fetch issues.');
+      }
+    };
+
+    loadIssues();
+    intervalId = window.setInterval(loadIssues, 30000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (issues.length === 0) {
+      if (selectedIssueId) {
+        setSelectedIssueId(null);
+      }
+      return;
+    }
+    const hasSelection = issues.some((issue) => issue.id === selectedIssueId);
+    if (!hasSelection) {
+      setSelectedIssueId(issues[0]?.id ?? null);
+    }
+  }, [issues, selectedIssueId]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    if (!selectedIssueId) {
+      clearIssuePagePreviews(editor);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadIssuePages = async () => {
+      try {
+        const response = await fetch(`/api/issues/${selectedIssueId}/pages`);
+        if (!response.ok) {
+          const details = await response.text();
+          throw new Error(`Request failed (${response.status}): ${details.slice(0, 200)}`);
+        }
+        const data = await response.json();
+        if (cancelled) return;
+        const pages = Array.isArray(data?.pages) ? data.pages : [];
+        renderIssuePages(editor, selectedIssueId, pages);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load issue pages', error);
+      }
+    };
+
+    loadIssuePages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, selectedIssueId]);
+
   return (
     <div className="flex h-screen w-full flex-col bg-white text-slate-900 font-sans antialiased selection:bg-[#1e61f0] selection:text-white overflow-hidden">
       <Header />
@@ -246,6 +368,9 @@ export default function DesignPlatformUI() {
           isOpen={leftSidebarOpen}
           onClose={() => setLeftSidebarOpen(false)}
           editor={editor}
+          issues={issues}
+          selectedIssueId={selectedIssueId}
+          onSelectIssue={setSelectedIssueId}
         />
 
         {leftSidebarOpen && (
@@ -296,6 +421,8 @@ export default function DesignPlatformUI() {
           onClose={() => setRightSidebarOpen(false)}
           activeTab={activeTab}
           onTabChange={setActiveTab}
+          selectedIssue={issues.find((issue) => issue.id === selectedIssueId) ?? null}
+          issuesError={issuesError}
           selectedShapes={selectedShapes}
           chatContextShapes={chatContextShapes}
           isTyping={isTyping}
