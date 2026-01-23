@@ -208,7 +208,7 @@ export function LeftSidebar({
             `}
           >
              <span className="truncate">View All</span>
-             <span className="text-[10px] opacity-60 font-semibold">{allShapeIds.length+5}</span>
+             <span className="text-[10px] opacity-60 font-semibold">{allShapeIds.length}</span>
           </div>
 
           {/* Individual Tasks */}
